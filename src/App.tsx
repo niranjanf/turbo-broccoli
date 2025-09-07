@@ -2,10 +2,12 @@ import React, { useEffect, useMemo, useState } from "react";
 import {
   Plus,
   Trash2,
-  Receipt,
-  Users,
-  IndianRupee,
+  Download,
+  Upload,
   RefreshCw,
+  Users,
+  Receipt,
+  IndianRupee,
 } from "lucide-react";
 
 interface Member {
@@ -13,20 +15,16 @@ interface Member {
   name: string;
 }
 
-interface Contribution {
-  memberId: string;
-  amount: number;
-}
-
 interface Expense {
   id: string;
   description: string;
-  date: string;
-  contributions: Contribution[];
+  amount: number;
+  paidBy: string;
   splitAmong: string[];
+  date: string;
 }
 
-export default function App() {
+function App() {
   const [members, setMembers] = useState<Member[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [showHistory, setShowHistory] = useState(false);
@@ -45,65 +43,35 @@ export default function App() {
     localStorage.setItem("expenses", JSON.stringify(expenses));
   }, [members, expenses]);
 
-  // Add Member
   const addMember = (name: string) => {
     if (!name.trim()) return;
     setMembers([...members, { id: Date.now().toString(), name }]);
   };
 
-  // Expense Form State
-  const [description, setDescription] = useState("");
-  const [contributions, setContributions] = useState<Record<string, number>>({});
-  const [splitAmong, setSplitAmong] = useState<Record<string, boolean>>({});
-
-  useEffect(() => {
-    const contrib: Record<string, number> = {};
-    const split: Record<string, boolean> = {};
-    members.forEach((m) => {
-      contrib[m.id] = contributions[m.id] || 0;
-      split[m.id] = splitAmong[m.id] ?? true;
-    });
-    setContributions(contrib);
-    setSplitAmong(split);
-  }, [members]);
-
-  // Add Expense
-  const addExpense = () => {
-    const activeContribs: Contribution[] = Object.entries(contributions)
-      .filter(([_, amt]) => amt > 0)
-      .map(([memberId, amount]) => ({ memberId, amount }));
-
-    const activeSplit = Object.entries(splitAmong)
-      .filter(([_, included]) => included)
-      .map(([memberId]) => memberId);
-
-    if (!description.trim() || activeContribs.length === 0 || activeSplit.length === 0) {
-      alert("Fill all fields properly!");
-      return;
-    }
-
+  const addExpense = (
+    description: string,
+    amount: number,
+    paidBy: string,
+    splitAmong: string[]
+  ) => {
+    if (!description || !amount || !paidBy || splitAmong.length === 0) return;
     setExpenses([
       ...expenses,
       {
         id: Date.now().toString(),
         description,
+        amount,
+        paidBy,
+        splitAmong,
         date: new Date().toISOString(),
-        contributions: activeContribs,
-        splitAmong: activeSplit,
       },
     ]);
-
-    setDescription("");
-    setContributions(members.reduce((acc, m) => ({ ...acc, [m.id]: 0 }), {}));
-    setSplitAmong(members.reduce((acc, m) => ({ ...acc, [m.id]: true }), {}));
   };
 
-  // Reset All Data
   const resetAll = () => {
-    if (window.confirm("Are you sure you want to reset all data?")) {
+    if (confirm("Clear all members and expenses?")) {
       setMembers([]);
       setExpenses([]);
-      localStorage.clear();
     }
   };
 
@@ -113,27 +81,42 @@ export default function App() {
     members.forEach((m) => (balance[m.id] = 0));
 
     expenses.forEach((exp) => {
-      const totalPaid = exp.contributions.reduce((sum, c) => sum + c.amount, 0);
-      const perHead = totalPaid / exp.splitAmong.length;
-
-      exp.contributions.forEach((c) => {
-        balance[c.memberId] += c.amount; // credit the payer
-      });
-
+      const share = exp.amount / exp.splitAmong.length;
       exp.splitAmong.forEach((id) => {
-        balance[id] -= perHead; // debit each sharer
+        balance[id] -= share; // owes share
       });
+      balance[exp.paidBy] += exp.amount; // gets credit
     });
 
     return balance;
   }, [members, expenses]);
 
-  const currency = (n: number) =>
-    new Intl.NumberFormat("en-IN", {
-      style: "currency",
-      currency: "INR",
-      maximumFractionDigits: 2,
-    }).format(n);
+  // Settlement plan
+  const settlements = useMemo(() => {
+    const eps = 0.01;
+    const creditors: { id: string; amt: number }[] = [];
+    const debtors: { id: string; amt: number }[] = [];
+
+    Object.entries(balances).forEach(([id, amt]) => {
+      if (amt > eps) creditors.push({ id, amt });
+      else if (amt < -eps) debtors.push({ id, amt: -amt });
+    });
+
+    const txns: { from: string; to: string; amount: number }[] = [];
+    let i = 0,
+      j = 0;
+    while (i < debtors.length && j < creditors.length) {
+      const d = debtors[i];
+      const c = creditors[j];
+      const pay = Math.min(d.amt, c.amt);
+      txns.push({ from: d.id, to: c.id, amount: pay });
+      d.amt -= pay;
+      c.amt -= pay;
+      if (d.amt < eps) i++;
+      if (c.amt < eps) j++;
+    }
+    return txns;
+  }, [balances]);
 
   return (
     <div className="p-6 max-w-4xl mx-auto">
@@ -141,133 +124,53 @@ export default function App() {
         <Receipt /> Roommate Expense Splitter
       </h1>
 
-      {/* Members Section */}
+      {/* Members */}
       <div className="mt-4">
         <h2 className="font-semibold flex items-center gap-2">
           <Users /> Members
         </h2>
-        <ul className="mb-2">
+        <ul>
           {members.map((m) => (
-            <li key={m.id} className="flex justify-between">
-              {m.name}
-              <button
-                className="text-red-500"
-                onClick={() =>
-                  setMembers(members.filter((mem) => mem.id !== m.id))
-                }
-              >
-                <Trash2 size={16} />
-              </button>
-            </li>
+            <li key={m.id}>{m.name}</li>
           ))}
         </ul>
         <button
-          className="bg-indigo-500 text-white px-3 py-1 rounded flex items-center gap-1"
+          className="mt-2 bg-indigo-500 text-white px-3 py-1 rounded flex items-center gap-1"
           onClick={() => addMember(prompt("Enter member name") || "")}
         >
           <Plus size={16} /> Add Member
         </button>
       </div>
 
-      {/* Expenses Section */}
+      {/* Expenses */}
       <div className="mt-6">
         <h2 className="font-semibold flex items-center gap-2">
-          <IndianRupee /> Add Expense
+          <IndianRupee /> Expenses
         </h2>
-        <div className="mb-2">
-          <input
-            type="text"
-            placeholder="Description"
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            className="border px-2 py-1 rounded w-full"
-          />
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-          {members.map((m) => (
-            <div key={m.id} className="flex items-center gap-2">
-              <input
-                type="number"
-                min={0}
-                placeholder="Paid"
-                value={contributions[m.id] || ""}
-                onChange={(e) =>
-                  setContributions({
-                    ...contributions,
-                    [m.id]: Number(e.target.value),
-                  })
-                }
-                className="border px-2 py-1 rounded w-20"
-              />
-              <label>
-                <input
-                  type="checkbox"
-                  checked={splitAmong[m.id]}
-                  onChange={(e) =>
-                    setSplitAmong({ ...splitAmong, [m.id]: e.target.checked })
-                  }
-                />{" "}
-                {m.name}
-              </label>
-            </div>
+        <ul>
+          {expenses.map((e) => (
+            <li key={e.id}>
+              {e.description} — ₹{e.amount.toFixed(2)} (Paid by{" "}
+              {members.find((m) => m.id === e.paidBy)?.name || "Unknown"})
+            </li>
           ))}
-        </div>
+        </ul>
         <button
           className="mt-2 bg-green-500 text-white px-3 py-1 rounded flex items-center gap-1"
-          onClick={addExpense}
+          onClick={() => {
+            const description = prompt("Description") || "Expense";
+            const amount = Number(prompt("Amount"));
+            const paidBy = prompt(
+              `Paid by (choose from: ${members.map((m) => m.name).join(", ")})`
+            );
+            if (!paidBy || !members.find((m) => m.name === paidBy)) return;
+            const paidById = members.find((m) => m.name === paidBy)?.id || "";
+            addExpense(description, amount, paidById, members.map((m) => m.id));
+          }}
         >
           <Plus size={16} /> Add Expense
         </button>
       </div>
-
-      {/* Action Buttons */}
-      <div className="mt-6 flex gap-4">
-        <button
-          className="bg-blue-500 text-white px-3 py-1 rounded flex items-center gap-1"
-          onClick={() => setShowHistory(!showHistory)}
-        >
-          <RefreshCw size={16} /> {showHistory ? "Hide History" : "Show History"}
-        </button>
-        <button
-          className="bg-red-500 text-white px-3 py-1 rounded flex items-center gap-1"
-          onClick={resetAll}
-        >
-          <Trash2 size={16} /> Reset All
-        </button>
-      </div>
-
-      {/* Expenses History */}
-      {showHistory && (
-        <div className="mt-6">
-          <h2 className="font-semibold flex items-center gap-2">
-            <Receipt /> Expense History
-          </h2>
-          <ul>
-            {expenses
-              .slice()
-              .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-              .map((exp) => (
-                <li key={exp.id} className="mb-2 border p-2 rounded">
-                  <strong>{exp.description}</strong> — {new Date(exp.date).toLocaleString()}
-                  <ul className="ml-4">
-                    {exp.contributions.map((c) => (
-                      <li key={c.memberId}>
-                        {members.find((m) => m.id === c.memberId)?.name || "Unknown"} paid{" "}
-                        {currency(c.amount)}
-                      </li>
-                    ))}
-                    <li>
-                      Split among:{" "}
-                      {exp.splitAmong
-                        .map((id) => members.find((m) => m.id === id)?.name || "Unknown")
-                        .join(", ")}
-                    </li>
-                  </ul>
-                </li>
-              ))}
-          </ul>
-        </div>
-      )}
 
       {/* Balances */}
       <div className="mt-6">
@@ -275,15 +178,67 @@ export default function App() {
         <ul>
           {members.map((m) => (
             <li key={m.id}>
-              {m.name}:{" "}
-              {balances[m.id] >= 0
-                ? `should receive ${currency(balances[m.id])}`
-                : `owes ${currency(-balances[m.id])}`}
+              {m.name}: ₹{balances[m.id]?.toFixed(2)}{" "}
+              {balances[m.id] > 0 ? "should receive" : "owes"}
             </li>
           ))}
         </ul>
       </div>
+
+      {/* Settlement */}
+      <div className="mt-6">
+        <h2 className="font-semibold">Settlement Plan</h2>
+        {settlements.length === 0 ? (
+          <p>All settled or not enough data.</p>
+        ) : (
+          <ul>
+            {settlements.map((t, idx) => (
+              <li key={idx}>
+                {members.find((m) => m.id === t.from)?.name} pays ₹
+                {t.amount.toFixed(2)} to{" "}
+                {members.find((m) => m.id === t.to)?.name}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      {/* History and Reset */}
+      <div className="mt-6 flex gap-2">
+        <button
+          className="bg-blue-500 text-white px-3 py-1 rounded"
+          onClick={() => setShowHistory(!showHistory)}
+        >
+          {showHistory ? "Hide" : "Show"} History
+        </button>
+        <button
+          className="bg-rose-500 text-white px-3 py-1 rounded"
+          onClick={resetAll}
+        >
+          Reset All
+        </button>
+      </div>
+
+      {showHistory && (
+        <div className="mt-4">
+          <h2 className="font-semibold">Expense History</h2>
+          <ul>
+            {expenses
+              .slice()
+              .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+              .map((e) => (
+                <li key={e.id}>
+                  {new Date(e.date).toLocaleString()} — {e.description}: ₹
+                  {e.amount.toFixed(2)} (Paid by{" "}
+                  {members.find((m) => m.id === e.paidBy)?.name})
+                </li>
+              ))}
+          </ul>
+        </div>
+      )}
     </div>
   );
 }
+
+export default App;
 
