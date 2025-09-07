@@ -2,15 +2,19 @@ import React, { useEffect, useMemo, useState } from "react";
 import {
   Plus,
   Trash2,
+  Download,
+  RefreshCw,
   Users,
   Receipt,
   IndianRupee,
-  RefreshCw,
+  Mail,
 } from "lucide-react";
+import emailjs from "@emailjs/browser";
 
 interface Member {
   id: string;
   name: string;
+  email: string;
 }
 
 interface Payer {
@@ -21,7 +25,7 @@ interface Payer {
 interface Expense {
   id: string;
   description: string;
-  paidBy: Payer[]; // multiple payers
+  paidBy: Payer[];
   splitAmong: string[];
   date: string;
 }
@@ -44,203 +48,206 @@ export default function App() {
     localStorage.setItem("expenses", JSON.stringify(expenses));
   }, [members, expenses]);
 
-  // Add member
-  const addMember = (name: string) => {
-    if (!name.trim()) return;
-    setMembers([...members, { id: Date.now().toString(), name }]);
+  // Add Member
+  const addMember = () => {
+    const name = prompt("Enter member name") || "";
+    const email = prompt("Enter member email") || "";
+    if (!name || !email) return;
+    setMembers([...members, { id: Date.now().toString(), name, email }]);
   };
 
-  // Add expense
+  // Add Expense
   const addExpense = () => {
-    if (members.length === 0) {
-      alert("Add members first");
-      return;
+    const description = prompt("Description") || "Expense";
+    const splitAmongIds = members.map((m) => m.id);
+
+    // Ask how much each member paid
+    const paidBy: Payer[] = members.map((m) => {
+      const amt = Number(prompt(`${m.name} paid?`) || 0);
+      return { memberId: m.id, amountPaid: amt };
+    });
+
+    setExpenses([
+      ...expenses,
+      { id: Date.now().toString(), description, paidBy, splitAmong: splitAmongIds, date: new Date().toISOString() },
+    ]);
+  };
+
+  // Reset all data
+  const resetAll = () => {
+    if (window.confirm("Are you sure? This will clear all data.")) {
+      setMembers([]);
+      setExpenses([]);
     }
-
-    const description = prompt("Expense description") || "Expense";
-
-    // Collect paid amounts per member
-    const payers: Payer[] = [];
-    for (const m of members) {
-      const amtStr = prompt(`Amount paid by ${m.name} (0 if none)`) || "0";
-      const amt = parseFloat(amtStr);
-      if (amt > 0) payers.push({ memberId: m.id, amountPaid: amt });
-    }
-
-    if (payers.length === 0) {
-      alert("At least one member must pay something");
-      return;
-    }
-
-    // Split among selected members (default: all)
-    const splitAmong = members.map((m) => m.id);
-
-    const newExp: Expense = {
-      id: Date.now().toString(),
-      description,
-      paidBy: payers,
-      splitAmong,
-      date: new Date().toISOString(),
-    };
-
-    setExpenses([newExp, ...expenses]);
   };
 
   // Calculate balances
   const balances = useMemo(() => {
     const bal: Record<string, number> = {};
     members.forEach((m) => (bal[m.id] = 0));
+    expenses.forEach((exp) => {
+      const totalPaid = exp.paidBy.reduce((a, b) => a + b.amountPaid, 0);
+      const share = totalPaid / exp.splitAmong.length;
 
-    for (const exp of expenses) {
-      const totalAmountPaid = exp.paidBy.reduce(
-        (sum, p) => sum + p.amountPaid,
-        0
-      );
-      const sharePerMember = totalAmountPaid / exp.splitAmong.length;
-
-      exp.splitAmong.forEach((id) => {
-        bal[id] -= sharePerMember;
-      });
-
-      exp.paidBy.forEach((p) => {
-        bal[p.memberId] += p.amountPaid;
-      });
-    }
-
+      exp.splitAmong.forEach((id) => (bal[id] -= share));
+      exp.paidBy.forEach((p) => (bal[p.memberId] += p.amountPaid));
+    });
     return bal;
   }, [members, expenses]);
 
-  // Compute settlements (who pays whom)
+  // Settlements (who pays whom)
   const settlements = useMemo(() => {
-    const eps = 0.01;
-    const creditors: { id: string; amt: number }[] = [];
-    const debtors: { id: string; amt: number }[] = [];
+    const creditors = members
+      .map((m) => ({ id: m.id, amt: balances[m.id] }))
+      .filter((c) => c.amt > 0)
+      .sort((a, b) => b.amt - a.amt);
 
-    Object.entries(balances).forEach(([id, amt]) => {
-      if (amt > eps) creditors.push({ id, amt });
-      else if (amt < -eps) debtors.push({ id, amt: -amt });
-    });
+    const debtors = members
+      .map((m) => ({ id: m.id, amt: -balances[m.id] }))
+      .filter((d) => d.amt > 0)
+      .sort((a, b) => b.amt - a.amt);
 
-    creditors.sort((a, b) => b.amt - a.amt);
-    debtors.sort((a, b) => b.amt - a.amt);
-
-    const txns: { from: string; to: string; amount: number }[] = [];
+    const result: { from: string; to: string; amt: number }[] = [];
     let i = 0,
       j = 0;
+
     while (i < debtors.length && j < creditors.length) {
       const d = debtors[i];
       const c = creditors[j];
       const pay = Math.min(d.amt, c.amt);
-      txns.push({ from: d.id, to: c.id, amount: pay });
+
+      result.push({ from: d.id, to: c.id, amt: pay });
+
       d.amt -= pay;
       c.amt -= pay;
-      if (d.amt <= eps) i++;
-      if (c.amt <= eps) j++;
+
+      if (d.amt < 0.01) i++;
+      if (c.amt < 0.01) j++;
     }
 
-    return txns;
-  }, [balances]);
+    return result;
+  }, [balances, members]);
 
-  const resetAll = () => {
-    if (confirm("Clear all members and expenses?")) {
-      setMembers([]);
-      setExpenses([]);
-    }
+  // Send emails via EmailJS
+  const sendEmails = () => {
+    settlements.forEach((s) => {
+      const fromMember = members.find((m) => m.id === s.from);
+      const toMember = members.find((m) => m.id === s.to);
+      if (!fromMember || !toMember) return;
+
+      const message = `
+Hello ${fromMember.name},
+
+You owe ₹${s.amt.toFixed(2)} to ${toMember.name}.
+
+Expenses breakdown:
+${expenses
+  .map(
+    (e) =>
+      `- ${e.description}: ${e.paidBy
+        .map(
+          (p) =>
+            `${members.find((m) => m.id === p.memberId)?.name || ""} paid ₹${
+              p.amountPaid
+            }`
+        )
+        .join(", ")}`
+  )
+  .join("\n")}
+`;
+
+      emailjs.send(
+        "YOUR_SERVICE_ID",
+        "YOUR_TEMPLATE_ID",
+        {
+          to_name: fromMember.name,
+          to_email: fromMember.email,
+          message: message,
+        },
+        "YOUR_PUBLIC_KEY"
+      );
+    });
+    alert("Emails sent!");
   };
 
   return (
-    <div className="p-6">
-      <h1 className="text-2xl font-bold flex items-center gap-2">
+    <div className="p-6 bg-gray-50 min-h-screen">
+      <h1 className="text-3xl font-bold flex items-center gap-2 text-indigo-600">
         <Receipt /> Roommate Expense Splitter
       </h1>
 
+      <div className="mt-6 flex gap-4 flex-wrap">
+        <button className="bg-indigo-500 hover:bg-indigo-600 text-white px-4 py-2 rounded flex items-center gap-2" onClick={addMember}>
+          <Plus /> Add Member
+        </button>
+        <button className="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded flex items-center gap-2" onClick={addExpense}>
+          <Plus /> Add Expense
+        </button>
+        <button className="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded flex items-center gap-2" onClick={resetAll}>
+          <RefreshCw /> Reset All
+        </button>
+        <button className="bg-yellow-500 hover:bg-yellow-600 text-white px-4 py-2 rounded flex items-center gap-2" onClick={sendEmails}>
+          <Mail /> Send Emails
+        </button>
+      </div>
+
       {/* Members */}
-      <div className="mt-4">
-        <h2 className="font-semibold flex items-center gap-2">
-          <Users /> Members
-        </h2>
-        <ul>
+      <div className="mt-6">
+        <h2 className="text-xl font-semibold flex items-center gap-2"><Users /> Members</h2>
+        <ul className="mt-2 space-y-1">
           {members.map((m) => (
-            <li key={m.id}>{m.name}</li>
+            <li key={m.id} className="p-2 bg-white shadow rounded flex justify-between">
+              <span>{m.name}</span>
+              <span className="text-sm text-gray-500">{m.email}</span>
+            </li>
           ))}
         </ul>
-        <button
-          className="mt-2 bg-indigo-500 text-white px-3 py-1 rounded flex items-center gap-1"
-          onClick={() => addMember(prompt("Enter member name") || "")}
-        >
-          <Plus size={16} /> Add Member
-        </button>
       </div>
 
       {/* Expenses */}
       <div className="mt-6">
-        <h2 className="font-semibold flex items-center gap-2">
-          <IndianRupee /> Expenses
-        </h2>
-        <ul>
-          {expenses.map((e) => (
-            <li key={e.id}>
-              {e.description} — ₹
-              {e.paidBy.reduce((sum, p) => sum + p.amountPaid, 0).toFixed(2)} (
-              {e.paidBy
-                .map(
-                  (p) =>
-                    `${members.find((m) => m.id === p.memberId)?.name || "?"}: ₹${p.amountPaid.toFixed(
-                      2
-                    )}`
-                )
-                .join(", ")}
-              )
-            </li>
-          ))}
+        <h2 className="text-xl font-semibold flex items-center gap-2"><IndianRupee /> Expenses</h2>
+        <ul className="mt-2 space-y-2">
+          {expenses
+            .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+            .map((e) => (
+              <li key={e.id} className="p-2 bg-white shadow rounded">
+                <div className="font-semibold">{e.description} — ₹{e.paidBy.reduce((a,b)=>a+b.amountPaid,0)}</div>
+                <div className="text-sm text-gray-600">
+                  {e.paidBy.map((p) => (
+                    <div key={p.memberId}>
+                      {members.find((m) => m.id === p.memberId)?.name} paid ₹{p.amountPaid}
+                    </div>
+                  ))}
+                </div>
+              </li>
+            ))}
         </ul>
-        <button
-          className="mt-2 bg-green-500 text-white px-3 py-1 rounded flex items-center gap-1"
-          onClick={addExpense}
-        >
-          <Plus size={16} /> Add Expense
-        </button>
       </div>
 
       {/* Balances */}
       <div className="mt-6">
-        <h2 className="font-semibold">Balances</h2>
-        <ul>
+        <h2 className="text-xl font-semibold">Balances</h2>
+        <ul className="mt-2 space-y-1">
           {members.map((m) => (
-            <li key={m.id}>
-              {m.name}:{" "}
-              {balances[m.id] >= 0
-                ? `should receive ₹${balances[m.id].toFixed(2)}`
-                : `owes ₹${Math.abs(balances[m.id]).toFixed(2)}`}
+            <li key={m.id} className="p-2 bg-white shadow rounded">
+              {m.name}: ₹{balances[m.id].toFixed(2)}
             </li>
           ))}
         </ul>
-      </div>
 
-      {/* Settlements */}
-      <div className="mt-6">
-        <h2 className="font-semibold">Settlement Plan</h2>
-        {settlements.length === 0 ? (
-          <p>All settled or not enough data yet.</p>
-        ) : (
-          <ul>
+        {/* Settlements */}
+        <div className="mt-4">
+          <h2 className="text-xl font-semibold">Who pays whom</h2>
+          <ul className="mt-2 space-y-1">
             {settlements.map((s, idx) => (
-              <li key={idx}>
-                {members.find((m) => m.id === s.from)?.name || "?"} pays{" "}
-                {members.find((m) => m.id === s.to)?.name || "?"} ₹
-                {s.amount.toFixed(2)}
+              <li key={idx} className="p-2 bg-white shadow rounded">
+                {members.find((m) => m.id === s.from)?.name} pays ₹{s.amt.toFixed(2)} to {members.find((m) => m.id === s.to)?.name}
               </li>
             ))}
           </ul>
-        )}
+        </div>
       </div>
-
-      <button
-        className="mt-4 bg-rose-500 text-white px-3 py-1 rounded flex items-center gap-1"
-        onClick={resetAll}
-      >
-        <RefreshCw size={16} /> Reset All
-      </button>
     </div>
   );
 }
