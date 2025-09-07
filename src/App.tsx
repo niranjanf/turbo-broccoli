@@ -2,12 +2,10 @@ import React, { useEffect, useMemo, useState } from "react";
 import {
   Plus,
   Trash2,
-  Download,
-  Upload,
-  RefreshCw,
   Users,
   Receipt,
   IndianRupee,
+  RefreshCw,
 } from "lucide-react";
 
 interface Member {
@@ -15,19 +13,22 @@ interface Member {
   name: string;
 }
 
+interface Payer {
+  memberId: string;
+  amountPaid: number;
+}
+
 interface Expense {
   id: string;
   description: string;
-  amount: number;
-  paidBy: string;
+  paidBy: Payer[]; // multiple payers
   splitAmong: string[];
   date: string;
 }
 
-function App() {
+export default function App() {
   const [members, setMembers] = useState<Member[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
-  const [showHistory, setShowHistory] = useState(false);
 
   // Load from localStorage
   useEffect(() => {
@@ -43,55 +44,73 @@ function App() {
     localStorage.setItem("expenses", JSON.stringify(expenses));
   }, [members, expenses]);
 
+  // Add member
   const addMember = (name: string) => {
     if (!name.trim()) return;
     setMembers([...members, { id: Date.now().toString(), name }]);
   };
 
-  const addExpense = (
-    description: string,
-    amount: number,
-    paidBy: string,
-    splitAmong: string[]
-  ) => {
-    if (!description || !amount || !paidBy || splitAmong.length === 0) return;
-    setExpenses([
-      ...expenses,
-      {
-        id: Date.now().toString(),
-        description,
-        amount,
-        paidBy,
-        splitAmong,
-        date: new Date().toISOString(),
-      },
-    ]);
-  };
-
-  const resetAll = () => {
-    if (confirm("Clear all members and expenses?")) {
-      setMembers([]);
-      setExpenses([]);
+  // Add expense
+  const addExpense = () => {
+    if (members.length === 0) {
+      alert("Add members first");
+      return;
     }
+
+    const description = prompt("Expense description") || "Expense";
+
+    // Collect paid amounts per member
+    const payers: Payer[] = [];
+    for (const m of members) {
+      const amtStr = prompt(`Amount paid by ${m.name} (0 if none)`) || "0";
+      const amt = parseFloat(amtStr);
+      if (amt > 0) payers.push({ memberId: m.id, amountPaid: amt });
+    }
+
+    if (payers.length === 0) {
+      alert("At least one member must pay something");
+      return;
+    }
+
+    // Split among selected members (default: all)
+    const splitAmong = members.map((m) => m.id);
+
+    const newExp: Expense = {
+      id: Date.now().toString(),
+      description,
+      paidBy: payers,
+      splitAmong,
+      date: new Date().toISOString(),
+    };
+
+    setExpenses([newExp, ...expenses]);
   };
 
   // Calculate balances
   const balances = useMemo(() => {
-    const balance: Record<string, number> = {};
-    members.forEach((m) => (balance[m.id] = 0));
+    const bal: Record<string, number> = {};
+    members.forEach((m) => (bal[m.id] = 0));
 
-    expenses.forEach((exp) => {
-      const share = exp.amount / exp.splitAmong.length;
+    for (const exp of expenses) {
+      const totalAmountPaid = exp.paidBy.reduce(
+        (sum, p) => sum + p.amountPaid,
+        0
+      );
+      const sharePerMember = totalAmountPaid / exp.splitAmong.length;
+
       exp.splitAmong.forEach((id) => {
-        balance[id] -= share; // owes share
+        bal[id] -= sharePerMember;
       });
-      balance[exp.paidBy] += exp.amount; // gets credit
-    });
 
-    return balance;
+      exp.paidBy.forEach((p) => {
+        bal[p.memberId] += p.amountPaid;
+      });
+    }
+
+    return bal;
   }, [members, expenses]);
 
-  // Settlement plan
+  // Compute settlements (who pays whom)
   const settlements = useMemo(() => {
     const eps = 0.01;
     const creditors: { id: string; amt: number }[] = [];
@@ -101,6 +120,9 @@ function App() {
       if (amt > eps) creditors.push({ id, amt });
       else if (amt < -eps) debtors.push({ id, amt: -amt });
     });
+
+    creditors.sort((a, b) => b.amt - a.amt);
+    debtors.sort((a, b) => b.amt - a.amt);
 
     const txns: { from: string; to: string; amount: number }[] = [];
     let i = 0,
@@ -112,14 +134,22 @@ function App() {
       txns.push({ from: d.id, to: c.id, amount: pay });
       d.amt -= pay;
       c.amt -= pay;
-      if (d.amt < eps) i++;
-      if (c.amt < eps) j++;
+      if (d.amt <= eps) i++;
+      if (c.amt <= eps) j++;
     }
+
     return txns;
   }, [balances]);
 
+  const resetAll = () => {
+    if (confirm("Clear all members and expenses?")) {
+      setMembers([]);
+      setExpenses([]);
+    }
+  };
+
   return (
-    <div className="p-6 max-w-4xl mx-auto">
+    <div className="p-6">
       <h1 className="text-2xl font-bold flex items-center gap-2">
         <Receipt /> Roommate Expense Splitter
       </h1>
@@ -150,23 +180,23 @@ function App() {
         <ul>
           {expenses.map((e) => (
             <li key={e.id}>
-              {e.description} — ₹{e.amount.toFixed(2)} (Paid by{" "}
-              {members.find((m) => m.id === e.paidBy)?.name || "Unknown"})
+              {e.description} — ₹
+              {e.paidBy.reduce((sum, p) => sum + p.amountPaid, 0).toFixed(2)} (
+              {e.paidBy
+                .map(
+                  (p) =>
+                    `${members.find((m) => m.id === p.memberId)?.name || "?"}: ₹${p.amountPaid.toFixed(
+                      2
+                    )}`
+                )
+                .join(", ")}
+              )
             </li>
           ))}
         </ul>
         <button
           className="mt-2 bg-green-500 text-white px-3 py-1 rounded flex items-center gap-1"
-          onClick={() => {
-            const description = prompt("Description") || "Expense";
-            const amount = Number(prompt("Amount"));
-            const paidBy = prompt(
-              `Paid by (choose from: ${members.map((m) => m.name).join(", ")})`
-            );
-            if (!paidBy || !members.find((m) => m.name === paidBy)) return;
-            const paidById = members.find((m) => m.name === paidBy)?.id || "";
-            addExpense(description, amount, paidById, members.map((m) => m.id));
-          }}
+          onClick={addExpense}
         >
           <Plus size={16} /> Add Expense
         </button>
@@ -178,67 +208,40 @@ function App() {
         <ul>
           {members.map((m) => (
             <li key={m.id}>
-              {m.name}: ₹{balances[m.id]?.toFixed(2)}{" "}
-              {balances[m.id] > 0 ? "should receive" : "owes"}
+              {m.name}:{" "}
+              {balances[m.id] >= 0
+                ? `should receive ₹${balances[m.id].toFixed(2)}`
+                : `owes ₹${Math.abs(balances[m.id]).toFixed(2)}`}
             </li>
           ))}
         </ul>
       </div>
 
-      {/* Settlement */}
+      {/* Settlements */}
       <div className="mt-6">
         <h2 className="font-semibold">Settlement Plan</h2>
         {settlements.length === 0 ? (
-          <p>All settled or not enough data.</p>
+          <p>All settled or not enough data yet.</p>
         ) : (
           <ul>
-            {settlements.map((t, idx) => (
+            {settlements.map((s, idx) => (
               <li key={idx}>
-                {members.find((m) => m.id === t.from)?.name} pays ₹
-                {t.amount.toFixed(2)} to{" "}
-                {members.find((m) => m.id === t.to)?.name}
+                {members.find((m) => m.id === s.from)?.name || "?"} pays{" "}
+                {members.find((m) => m.id === s.to)?.name || "?"} ₹
+                {s.amount.toFixed(2)}
               </li>
             ))}
           </ul>
         )}
       </div>
 
-      {/* History and Reset */}
-      <div className="mt-6 flex gap-2">
-        <button
-          className="bg-blue-500 text-white px-3 py-1 rounded"
-          onClick={() => setShowHistory(!showHistory)}
-        >
-          {showHistory ? "Hide" : "Show"} History
-        </button>
-        <button
-          className="bg-rose-500 text-white px-3 py-1 rounded"
-          onClick={resetAll}
-        >
-          Reset All
-        </button>
-      </div>
-
-      {showHistory && (
-        <div className="mt-4">
-          <h2 className="font-semibold">Expense History</h2>
-          <ul>
-            {expenses
-              .slice()
-              .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-              .map((e) => (
-                <li key={e.id}>
-                  {new Date(e.date).toLocaleString()} — {e.description}: ₹
-                  {e.amount.toFixed(2)} (Paid by{" "}
-                  {members.find((m) => m.id === e.paidBy)?.name})
-                </li>
-              ))}
-          </ul>
-        </div>
-      )}
+      <button
+        className="mt-4 bg-rose-500 text-white px-3 py-1 rounded flex items-center gap-1"
+        onClick={resetAll}
+      >
+        <RefreshCw size={16} /> Reset All
+      </button>
     </div>
   );
 }
-
-export default App;
 
