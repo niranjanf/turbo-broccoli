@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 import React, { useEffect, useMemo, useState } from "react";
 import { Plus, Trash2, Download, Upload, RefreshCw, Users, Receipt, IndianRupee } from "lucide-react";
 
@@ -403,3 +404,142 @@ function NewExpenseCard({ members, onAdd }: { members: Member[], onAdd: (e: Expe
     </Card>
   );
 }
+=======
+import React, { useState } from "react";
+
+interface Member {
+  id: string;
+  name: string;
+}
+
+interface Expense {
+  id: string;
+  paidBy: string;
+  amount: number;
+  description: string;
+}
+
+const App: React.FC = () => {
+  const [members, setMembers] = useState<Member[]>([]);
+  const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [newMemberName, setNewMemberName] = useState("");
+  const [newExpenseAmount, setNewExpenseAmount] = useState<number>(0);
+  const [newExpenseDescription, setNewExpenseDescription] = useState("");
+  const [newExpensePaidBy, setNewExpensePaidBy] = useState<string>("");
+
+  const addMember = () => {
+    if (!newMemberName.trim()) return;
+    const newMember: Member = { id: Date.now().toString(), name: newMemberName.trim() };
+    setMembers([...members, newMember]);
+    setNewMemberName("");
+  };
+
+  const addExpense = () => {
+    if (!newExpenseAmount || !newExpensePaidBy) return;
+    const newExpense: Expense = {
+      id: Date.now().toString(),
+      paidBy: newExpensePaidBy,
+      amount: newExpenseAmount,
+      description: newExpenseDescription || "Misc"
+    };
+    setExpenses([...expenses, newExpense]);
+    setNewExpenseAmount(0);
+    setNewExpenseDescription("");
+    setNewExpensePaidBy("");
+  };
+
+  const calculateBalances = (): Record<string, number> => {
+    const total = expenses.reduce((sum, e) => sum + e.amount, 0);
+    const perHead = members.length > 0 ? total / members.length : 0;
+    const balances: Record<string, number> = {};
+
+    members.forEach((m) => {
+      const paid = expenses.filter((e) => e.paidBy === m.id).reduce((sum, e) => sum + e.amount, 0);
+      balances[m.id] = paid - perHead;
+    });
+
+    return balances;
+  };
+
+  const balances = calculateBalances();
+
+  return (
+    <div className="p-6 max-w-xl mx-auto">
+      <h1 className="text-2xl font-bold mb-4">💰 Roommate Expense Splitter</h1>
+
+      <div className="mb-4">
+        <input
+          type="text"
+          placeholder="Enter member name"
+          value={newMemberName}
+          onChange={(e) => setNewMemberName(e.target.value)}
+          className="border p-2 mr-2"
+        />
+        <button onClick={addMember} className="bg-blue-500 text-white px-4 py-2 rounded">
+          Add Member
+        </button>
+      </div>
+
+      {members.length > 0 && (
+        <div className="mb-6">
+          <input
+            type="number"
+            placeholder="Amount"
+            value={newExpenseAmount || ""}
+            onChange={(e) => setNewExpenseAmount(Number(e.target.value))}
+            className="border p-2 mr-2"
+          />
+          <input
+            type="text"
+            placeholder="Description"
+            value={newExpenseDescription}
+            onChange={(e) => setNewExpenseDescription(e.target.value)}
+            className="border p-2 mr-2"
+          />
+          <select
+            value={newExpensePaidBy}
+            onChange={(e) => setNewExpensePaidBy(e.target.value)}
+            className="border p-2 mr-2"
+          >
+            <option value="">Paid By</option>
+            {members.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.name}
+              </option>
+            ))}
+          </select>
+          <button onClick={addExpense} className="bg-green-500 text-white px-4 py-2 rounded">
+            Add Expense
+          </button>
+        </div>
+      )}
+
+      <h2 className="text-xl font-semibold mb-2">Expenses</h2>
+      <ul className="mb-6">
+        {expenses.map((e) => {
+          const payer = members.find((m) => m.id === e.paidBy);
+          return (
+            <li key={e.id} className="mb-2">
+              {payer?.name} paid ₹{e.amount} for {e.description}
+            </li>
+          );
+        })}
+      </ul>
+
+      <h2 className="text-xl font-semibold mb-2">Balances</h2>
+      <ul>
+        {members.map((m) => (
+          <li key={m.id}>
+            {m.name}{" "}
+            {balances[m.id] >= 0
+              ? `should receive ₹${balances[m.id].toFixed(2)}`
+              : `owes ₹${Math.abs(balances[m.id]).toFixed(2)}`}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+};
+
+export default App;
+>>>>>>> 4aa34ff (nrew wwjek)
