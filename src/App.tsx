@@ -61,11 +61,11 @@ function App() {
       totalPaid += amt;
     });
 
-    if (totalPaid !== totalAmount) {
-      alert(
-        `⚠️ Total paid by members (${totalPaid}) does not match total expense (${totalAmount}). ` +
-          `Balances will still be calculated, but expect one member to owe the difference.`
-      );
+    if (totalPaid < totalAmount) {
+      alert(`⚠️ Total paid (${totalPaid}) is less than total expense (${totalAmount}). Shortfall will be calculated in settlements.`);
+    } else if (totalPaid > totalAmount) {
+      alert(`⚠️ Total paid (${totalPaid}) exceeds total expense (${totalAmount}). Check the input amounts.`);
+      return;
     }
 
     const splitAmong = members.map((m) => m.id);
@@ -83,13 +83,11 @@ function App() {
 
     expenses.forEach((exp) => {
       const equalShare = exp.amount / exp.splitAmong.length;
-
       exp.splitAmong.forEach((id) => {
-        bal[id] -= equalShare; // each owes equal share
+        bal[id] -= equalShare;
       });
-
       Object.entries(exp.paid).forEach(([id, amt]) => {
-        bal[id] += amt; // add what each paid
+        bal[id] += amt;
       });
     });
 
@@ -103,31 +101,22 @@ function App() {
     const neg: { id: string; bal: number }[] = [];
 
     Object.entries(balances).forEach(([id, b]) => {
-      if (b > 0.01) pos.push({ id, bal: b });
-      else if (b < -0.01) neg.push({ id, bal: -b });
+      if (b > 0) pos.push({ id, bal: b });
+      else if (b < 0) neg.push({ id, bal: -b });
     });
 
-    // ⚠️ If no positives exist but negatives do → assign negatives to first member
-    if (pos.length === 0 && neg.length > 0 && members.length > 1) {
-      const receiver = members[0].id; // pick first member arbitrarily
-      const totalNeg = neg.reduce((a, n) => a + n.bal, 0);
-      pos.push({ id: receiver, bal: totalNeg });
-    }
-
-    let i = 0,
-      j = 0;
-
+    let i = 0, j = 0;
     while (i < pos.length && j < neg.length) {
       const pay = Math.min(pos[i].bal, neg[j].bal);
       owes.push({ from: neg[j].id, to: pos[i].id, amount: pay });
       pos[i].bal -= pay;
       neg[j].bal -= pay;
-      if (pos[i].bal < 0.01) i++;
-      if (neg[j].bal < 0.01) j++;
+      if (pos[i].bal === 0) i++;
+      if (neg[j].bal === 0) j++;
     }
 
     return owes;
-  }, [balances, members]);
+  }, [balances]);
 
   // Reset data
   const resetData = () => {
@@ -163,8 +152,7 @@ function App() {
       if (fromMember?.email && toMember?.email) {
         const html = `Hi ${fromMember.name},<br/>
           Please pay <b>₹${amount.toFixed(2)}</b> to ${toMember.name}.<br/>
-          <br/>
-          💰 Total expenses so far: ₹${expenses.reduce((a, e) => a + e.amount, 0)}.`;
+          💰 Total expenses: ₹${expenses.reduce((a, e) => a + e.amount, 0)}.`;
         sendEmail(fromMember.email, "Expense Settlement", html);
       }
     });
@@ -183,9 +171,7 @@ function App() {
         </h2>
         <ul>
           {members.map((m) => (
-            <li key={m.id}>
-              {m.name} {m.email && `(${m.email})`}
-            </li>
+            <li key={m.id}>{m.name} {m.email && `(${m.email})`}</li>
           ))}
         </ul>
         <button onClick={addMember} className="mt-2 bg-indigo-500 text-white px-4 py-1 rounded flex items-center gap-2">
@@ -215,9 +201,7 @@ function App() {
         <h2 className="text-xl font-semibold">Balances</h2>
         <ul>
           {members.map((m) => (
-            <li key={m.id}>
-              {m.name}: ₹{balances[m.id]?.toFixed(2)}
-            </li>
+            <li key={m.id}>{m.name}: ₹{balances[m.id]?.toFixed(2)}</li>
           ))}
         </ul>
       </div>
@@ -229,11 +213,7 @@ function App() {
           {settlements.map((s, i) => {
             const from = members.find((m) => m.id === s.from)?.name || "Unknown";
             const to = members.find((m) => m.id === s.to)?.name || "Unknown";
-            return (
-              <li key={i}>
-                {from} pays ₹{s.amount.toFixed(2)} to {to}
-              </li>
-            );
+            return <li key={i}>{from} pays ₹{s.amount.toFixed(2)} to {to}</li>;
           })}
         </ul>
         <button onClick={emailSettlements} className="mt-2 bg-blue-500 text-white px-4 py-1 rounded flex items-center gap-2">
