@@ -1,36 +1,28 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import {
   Plus,
-  Trash2,
-  Download,
-  RefreshCw,
   Users,
   Receipt,
-  IndianRupee,
   Mail,
+  RefreshCw,
 } from "lucide-react";
-import emailjs from "@emailjs/browser";
 
 interface Member {
   id: string;
   name: string;
-  email: string;
-}
-
-interface Payer {
-  memberId: string;
-  amountPaid: number;
+  email?: string;
 }
 
 interface Expense {
   id: string;
   description: string;
-  paidBy: Payer[];
+  amount: number;
+  paid: Record<string, number>; // memberId -> amount paid
   splitAmong: string[];
   date: string;
 }
 
-export default function App() {
+function App() {
   const [members, setMembers] = useState<Member[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
 
@@ -48,37 +40,31 @@ export default function App() {
     localStorage.setItem("expenses", JSON.stringify(expenses));
   }, [members, expenses]);
 
-  // Add Member
+  // Add member
   const addMember = () => {
-    const name = prompt("Enter member name") || "";
-    const email = prompt("Enter member email") || "";
-    if (!name || !email) return;
-    setMembers([...members, { id: Date.now().toString(), name, email }]);
+    const name = prompt("Enter member name");
+    const email = prompt("Enter member email (optional)");
+    if (!name) return;
+    setMembers([...members, { id: Date.now().toString(), name, email: email || "" }]);
   };
 
-  // Add Expense
+  // Add expense
   const addExpense = () => {
-    const description = prompt("Description") || "Expense";
-    const splitAmongIds = members.map((m) => m.id);
-
-    // Ask how much each member paid
-    const paidBy: Payer[] = members.map((m) => {
-      const amt = Number(prompt(`${m.name} paid?`) || 0);
-      return { memberId: m.id, amountPaid: amt };
+    if (members.length === 0) return alert("Add members first!");
+    const description = prompt("Enter expense description") || "Expense";
+    const paid: Record<string, number> = {};
+    members.forEach((m) => {
+      const amt = prompt(`Amount paid by ${m.name}`) || "0";
+      paid[m.id] = Number(amt);
     });
+    const totalPaid = Object.values(paid).reduce((a, b) => a + b, 0);
+    if (totalPaid === 0) return alert("No amount entered!");
+    const splitAmong = members.map((m) => m.id);
 
     setExpenses([
       ...expenses,
-      { id: Date.now().toString(), description, paidBy, splitAmong: splitAmongIds, date: new Date().toISOString() },
+      { id: Date.now().toString(), description, amount: totalPaid, paid, splitAmong, date: new Date().toISOString() },
     ]);
-  };
-
-  // Reset all data
-  const resetAll = () => {
-    if (window.confirm("Are you sure? This will clear all data.")) {
-      setMembers([]);
-      setExpenses([]);
-    }
   };
 
   // Calculate balances
@@ -86,169 +72,172 @@ export default function App() {
     const bal: Record<string, number> = {};
     members.forEach((m) => (bal[m.id] = 0));
     expenses.forEach((exp) => {
-      const totalPaid = exp.paidBy.reduce((a, b) => a + b.amountPaid, 0);
-      const share = totalPaid / exp.splitAmong.length;
-
-      exp.splitAmong.forEach((id) => (bal[id] -= share));
-      exp.paidBy.forEach((p) => (bal[p.memberId] += p.amountPaid));
+      const totalSplit = exp.amount / exp.splitAmong.length;
+      exp.splitAmong.forEach((id) => {
+        bal[id] -= totalSplit;
+      });
+      Object.entries(exp.paid).forEach(([id, amt]) => {
+        bal[id] += amt;
+      });
     });
     return bal;
-  }, [members, expenses]);
+  }, [expenses, members]);
 
-  // Settlements (who pays whom)
+  // Calculate settlements
   const settlements = useMemo(() => {
-    const creditors = members
-      .map((m) => ({ id: m.id, amt: balances[m.id] }))
-      .filter((c) => c.amt > 0)
-      .sort((a, b) => b.amt - a.amt);
-
-    const debtors = members
-      .map((m) => ({ id: m.id, amt: -balances[m.id] }))
-      .filter((d) => d.amt > 0)
-      .sort((a, b) => b.amt - a.amt);
-
-    const result: { from: string; to: string; amt: number }[] = [];
+    const owes: { from: string; to: string; amount: number }[] = [];
+    const pos: { id: string; bal: number }[] = [];
+    const neg: { id: string; bal: number }[] = [];
+    Object.entries(balances).forEach(([id, b]) => {
+      if (b > 0) pos.push({ id, bal: b });
+      else if (b < 0) neg.push({ id, bal: -b });
+    });
     let i = 0,
       j = 0;
-
-    while (i < debtors.length && j < creditors.length) {
-      const d = debtors[i];
-      const c = creditors[j];
-      const pay = Math.min(d.amt, c.amt);
-
-      result.push({ from: d.id, to: c.id, amt: pay });
-
-      d.amt -= pay;
-      c.amt -= pay;
-
-      if (d.amt < 0.01) i++;
-      if (c.amt < 0.01) j++;
+    while (i < pos.length && j < neg.length) {
+      const pay = Math.min(pos[i].bal, neg[j].bal);
+      owes.push({ from: neg[j].id, to: pos[i].id, amount: pay });
+      pos[i].bal -= pay;
+      neg[j].bal -= pay;
+      if (pos[i].bal === 0) i++;
+      if (neg[j].bal === 0) j++;
     }
+    return owes;
+  }, [balances]);
 
-    return result;
-  }, [balances, members]);
+  // Reset data
+  const resetData = () => {
+    if (window.confirm("Reset all data?")) {
+      setMembers([]);
+      setExpenses([]);
+    }
+  };
 
-  // Send emails via EmailJS
-  const sendEmails = () => {
-    settlements.forEach((s) => {
-      const fromMember = members.find((m) => m.id === s.from);
-      const toMember = members.find((m) => m.id === s.to);
-      if (!fromMember || !toMember) return;
+  // Send email through backend
+  const sendEmail = async (memberEmail: string, subject: string, html: string) => {
+    try {
+      const res = await fetch("http://localhost:5000/send-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ to: memberEmail, subject, html }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        alert(`✅ Email sent to ${memberEmail}`);
+      } else {
+        alert(`❌ Email failed: ${data.error || "Unknown error"}`);
+      }
+    } catch (err) {
+      console.error(err);
+      alert("⚠️ Error sending email (check backend server).");
+    }
+  };
 
-      const message = `
-Hello ${fromMember.name},
-
-You owe ₹${s.amt.toFixed(2)} to ${toMember.name}.
-
-Expenses breakdown:
-${expenses
-  .map(
-    (e) =>
-      `- ${e.description}: ${e.paidBy
-        .map(
-          (p) =>
-            `${members.find((m) => m.id === p.memberId)?.name || ""} paid ₹${
-              p.amountPaid
-            }`
-        )
-        .join(", ")}`
-  )
-  .join("\n")}
-`;
-
-      emailjs.send(
-        "YOUR_SERVICE_ID",
-        "YOUR_TEMPLATE_ID",
-        {
-          to_name: fromMember.name,
-          to_email: fromMember.email,
-          message: message,
-        },
-        "YOUR_PUBLIC_KEY"
-      );
+  // Send settlement emails
+  const emailSettlements = () => {
+    if (settlements.length === 0) return alert("No settlements to send!");
+    settlements.forEach(({ from, to, amount }) => {
+      const fromMember = members.find((m) => m.id === from);
+      const toMember = members.find((m) => m.id === to);
+      if (fromMember?.email && toMember?.email) {
+        const html = `Hi ${fromMember.name},<br/>
+          Please pay <b>₹${amount.toFixed(2)}</b> to ${toMember.name}.<br/>
+          <br/>
+          💰 Total expenses so far: ₹${expenses.reduce((a, e) => a + e.amount, 0)}.`;
+        sendEmail(fromMember.email, "Expense Settlement", html);
+      }
     });
-    alert("Emails sent!");
   };
 
   return (
     <div className="p-6 bg-gray-50 min-h-screen">
-      <h1 className="text-3xl font-bold flex items-center gap-2 text-indigo-600">
+      <h1 className="text-3xl font-bold mb-4 flex items-center gap-2">
         <Receipt /> Roommate Expense Splitter
       </h1>
 
-      <div className="mt-6 flex gap-4 flex-wrap">
-        <button className="bg-indigo-500 hover:bg-indigo-600 text-white px-4 py-2 rounded flex items-center gap-2" onClick={addMember}>
-          <Plus /> Add Member
-        </button>
-        <button className="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded flex items-center gap-2" onClick={addExpense}>
-          <Plus /> Add Expense
-        </button>
-        <button className="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded flex items-center gap-2" onClick={resetAll}>
-          <RefreshCw /> Reset All
-        </button>
-        <button className="bg-yellow-500 hover:bg-yellow-600 text-white px-4 py-2 rounded flex items-center gap-2" onClick={sendEmails}>
-          <Mail /> Send Emails
-        </button>
-      </div>
-
       {/* Members */}
-      <div className="mt-6">
-        <h2 className="text-xl font-semibold flex items-center gap-2"><Users /> Members</h2>
-        <ul className="mt-2 space-y-1">
+      <div className="mb-6">
+        <h2 className="text-xl font-semibold flex items-center gap-2">
+          <Users /> Members
+        </h2>
+        <ul>
           {members.map((m) => (
-            <li key={m.id} className="p-2 bg-white shadow rounded flex justify-between">
-              <span>{m.name}</span>
-              <span className="text-sm text-gray-500">{m.email}</span>
+            <li key={m.id}>
+              {m.name} {m.email && `(${m.email})`}
             </li>
           ))}
         </ul>
+        <button
+          onClick={addMember}
+          className="mt-2 bg-indigo-500 text-white px-4 py-1 rounded flex items-center gap-2"
+        >
+          <Plus /> Add Member
+        </button>
       </div>
 
       {/* Expenses */}
-      <div className="mt-6">
-        <h2 className="text-xl font-semibold flex items-center gap-2"><IndianRupee /> Expenses</h2>
-        <ul className="mt-2 space-y-2">
-          {expenses
-            .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-            .map((e) => (
-              <li key={e.id} className="p-2 bg-white shadow rounded">
-                <div className="font-semibold">{e.description} — ₹{e.paidBy.reduce((a,b)=>a+b.amountPaid,0)}</div>
-                <div className="text-sm text-gray-600">
-                  {e.paidBy.map((p) => (
-                    <div key={p.memberId}>
-                      {members.find((m) => m.id === p.memberId)?.name} paid ₹{p.amountPaid}
-                    </div>
-                  ))}
-                </div>
-              </li>
-            ))}
-        </ul>
-      </div>
-
-      {/* Balances */}
-      <div className="mt-6">
-        <h2 className="text-xl font-semibold">Balances</h2>
-        <ul className="mt-2 space-y-1">
-          {members.map((m) => (
-            <li key={m.id} className="p-2 bg-white shadow rounded">
-              {m.name}: ₹{balances[m.id].toFixed(2)}
+      <div className="mb-6">
+        <h2 className="text-xl font-semibold flex items-center gap-2">
+          <Receipt /> Expenses
+        </h2>
+        <ul>
+          {expenses.map((e) => (
+            <li key={e.id}>
+              {e.description} — ₹{e.amount} (Date:{" "}
+              {new Date(e.date).toLocaleDateString()})
             </li>
           ))}
         </ul>
+        <button
+          onClick={addExpense}
+          className="mt-2 bg-green-500 text-white px-4 py-1 rounded flex items-center gap-2"
+        >
+          <Plus /> Add Expense
+        </button>
+      </div>
 
-        {/* Settlements */}
-        <div className="mt-4">
-          <h2 className="text-xl font-semibold">Who pays whom</h2>
-          <ul className="mt-2 space-y-1">
-            {settlements.map((s, idx) => (
-              <li key={idx} className="p-2 bg-white shadow rounded">
-                {members.find((m) => m.id === s.from)?.name} pays ₹{s.amt.toFixed(2)} to {members.find((m) => m.id === s.to)?.name}
+      {/* Balances */}
+      <div className="mb-6">
+        <h2 className="text-xl font-semibold">Balances</h2>
+        <ul>
+          {members.map((m) => (
+            <li key={m.id}>
+              {m.name}: ₹{balances[m.id]?.toFixed(2)}
+            </li>
+          ))}
+        </ul>
+      </div>
+
+      {/* Settlements */}
+      <div className="mb-6">
+        <h2 className="text-xl font-semibold">Settlements</h2>
+        <ul>
+          {settlements.map((s, i) => {
+            const from = members.find((m) => m.id === s.from)?.name || "Unknown";
+            const to = members.find((m) => m.id === s.to)?.name || "Unknown";
+            return (
+              <li key={i}>
+                {from} pays ₹{s.amount.toFixed(2)} to {to}
               </li>
-            ))}
-          </ul>
-        </div>
+            );
+          })}
+        </ul>
+        <button
+          onClick={emailSettlements}
+          className="mt-2 bg-blue-500 text-white px-4 py-1 rounded flex items-center gap-2"
+        >
+          <Mail /> Send Emails
+        </button>
+        <button
+          onClick={resetData}
+          className="mt-2 ml-2 bg-red-500 text-white px-4 py-1 rounded flex items-center gap-2"
+        >
+          <RefreshCw /> Reset
+        </button>
       </div>
     </div>
   );
 }
+
+export default App;
 
