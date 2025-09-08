@@ -49,7 +49,9 @@ function App() {
 
     const totalAmountStr = prompt("Enter total expense amount") || "0";
     const totalAmount = Number(totalAmountStr);
-    if (totalAmount <= 0) return alert("Invalid total expense amount!");
+    if (isNaN(totalAmount) || totalAmount <= 0) {
+      return alert("Invalid total expense amount!");
+    }
 
     const paid: Record<string, number> = {};
     let totalPaid = 0;
@@ -57,39 +59,49 @@ function App() {
     members.forEach((m) => {
       const amtStr = prompt(`Amount paid by ${m.name}`) || "0";
       const amt = Number(amtStr);
-      paid[m.id] = amt;
-      totalPaid += amt;
+      paid[m.id] = isNaN(amt) ? 0 : amt;
+      totalPaid += paid[m.id];
     });
 
-    // ⚡ Keep old logic: alert if total paid doesn't match total amount
     if (totalPaid !== totalAmount) {
-      return alert(`Total paid by members (${totalPaid}) does not match total expense (${totalAmount})`);
+      return alert(
+        `Total paid by members (${totalPaid}) does not match total expense (${totalAmount})`
+      );
     }
 
     const splitAmong = members.map((m) => m.id);
 
     setExpenses([
       ...expenses,
-      { id: Date.now().toString(), description, amount: totalAmount, paid, splitAmong, date: new Date().toISOString() },
+      {
+        id: Date.now().toString(),
+        description,
+        amount: totalAmount,
+        paid,
+        splitAmong,
+        date: new Date().toISOString(),
+      },
     ]);
   };
 
-  // Calculate balances (fixed rounding + partial payments)
+  // Calculate balances
   const balances = useMemo(() => {
     const bal: Record<string, number> = {};
     members.forEach((m) => (bal[m.id] = 0));
 
     expenses.forEach((exp) => {
       const equalShare = exp.amount / exp.splitAmong.length;
+
       exp.splitAmong.forEach((id) => {
-        bal[id] -= equalShare; // owes
+        bal[id] = (bal[id] || 0) - equalShare; // everyone owes share
       });
+
       Object.entries(exp.paid).forEach(([id, amt]) => {
-        bal[id] += amt; // paid
+        bal[id] = (bal[id] || 0) + amt; // add what they paid
       });
     });
 
-    // Round balances to 2 decimals
+    // normalize values
     Object.keys(bal).forEach((id) => {
       bal[id] = parseFloat(bal[id].toFixed(2));
     });
@@ -97,32 +109,33 @@ function App() {
     return bal;
   }, [expenses, members]);
 
-  // Calculate settlements (fixed)
+  // Calculate settlements
   const settlements = useMemo(() => {
     const owes: { from: string; to: string; amount: number }[] = [];
-    const pos = Object.entries(balances)
-      .filter(([_, b]) => b > 0)
-      .map(([id, bal]) => ({ id, bal }));
-    const neg = Object.entries(balances)
-      .filter(([_, b]) => b < 0)
-      .map(([id, bal]) => ({ id, bal: -bal }));
+    const pos: { id: string; bal: number }[] = [];
+    const neg: { id: string; bal: number }[] = [];
+
+    Object.entries(balances).forEach(([id, b]) => {
+      if (b > 0) pos.push({ id, bal: b });
+      else if (b < 0) neg.push({ id, bal: -b });
+    });
 
     let i = 0,
       j = 0;
 
     while (i < pos.length && j < neg.length) {
       const pay = Math.min(pos[i].bal, neg[j].bal);
-      if (pay > 0) owes.push({ from: neg[j].id, to: pos[i].id, amount: parseFloat(pay.toFixed(2)) });
+      owes.push({ from: neg[j].id, to: pos[i].id, amount: pay });
       pos[i].bal -= pay;
       neg[j].bal -= pay;
-      if (pos[i].bal <= 0.01) i++;
-      if (neg[j].bal <= 0.01) j++;
+      if (pos[i].bal === 0) i++;
+      if (neg[j].bal === 0) j++;
     }
 
     return owes;
   }, [balances]);
 
-  // Reset
+  // Reset data
   const resetData = () => {
     if (window.confirm("Reset all data?")) {
       setMembers([]);
@@ -130,7 +143,7 @@ function App() {
     }
   };
 
-  // Send email
+  // Send email through backend
   const sendEmail = async (memberEmail: string, subject: string, html: string) => {
     try {
       const res = await fetch("http://localhost:5000/send-email", {
@@ -147,7 +160,7 @@ function App() {
     }
   };
 
-  // Email settlements
+  // Send settlement emails
   const emailSettlements = () => {
     if (settlements.length === 0) return alert("No settlements to send!");
     settlements.forEach(({ from, to, amount }) => {
@@ -157,7 +170,10 @@ function App() {
         const html = `Hi ${fromMember.name},<br/>
           Please pay <b>₹${amount.toFixed(2)}</b> to ${toMember.name}.<br/>
           <br/>
-          💰 Total expenses so far: ₹${expenses.reduce((a, e) => a + e.amount, 0)}.`;
+          💰 Total expenses so far: ₹${expenses.reduce(
+            (a, e) => a + e.amount,
+            0
+          )}.`;
         sendEmail(fromMember.email, "Expense Settlement", html);
       }
     });
@@ -181,7 +197,10 @@ function App() {
             </li>
           ))}
         </ul>
-        <button onClick={addMember} className="mt-2 bg-indigo-500 text-white px-4 py-1 rounded flex items-center gap-2">
+        <button
+          onClick={addMember}
+          className="mt-2 bg-indigo-500 text-white px-4 py-1 rounded flex items-center gap-2"
+        >
           <Plus /> Add Member
         </button>
       </div>
@@ -194,11 +213,15 @@ function App() {
         <ul>
           {expenses.map((e) => (
             <li key={e.id}>
-              {e.description} — ₹{e.amount} (Date: {new Date(e.date).toLocaleDateString()})
+              {e.description} — ₹{e.amount} (Date:{" "}
+              {new Date(e.date).toLocaleDateString()})
             </li>
           ))}
         </ul>
-        <button onClick={addExpense} className="mt-2 bg-green-500 text-white px-4 py-1 rounded flex items-center gap-2">
+        <button
+          onClick={addExpense}
+          className="mt-2 bg-green-500 text-white px-4 py-1 rounded flex items-center gap-2"
+        >
           <Plus /> Add Expense
         </button>
       </div>
@@ -209,7 +232,10 @@ function App() {
         <ul>
           {members.map((m) => (
             <li key={m.id}>
-              {m.name}: ₹{balances[m.id]?.toFixed(2)}
+              {m.name}: ₹
+              {balances[m.id] !== undefined
+                ? balances[m.id].toFixed(2)
+                : "0.00"}
             </li>
           ))}
         </ul>
@@ -229,10 +255,16 @@ function App() {
             );
           })}
         </ul>
-        <button onClick={emailSettlements} className="mt-2 bg-blue-500 text-white px-4 py-1 rounded flex items-center gap-2">
+        <button
+          onClick={emailSettlements}
+          className="mt-2 bg-blue-500 text-white px-4 py-1 rounded flex items-center gap-2"
+        >
           <Mail /> Send Emails
         </button>
-        <button onClick={resetData} className="mt-2 ml-2 bg-red-500 text-white px-4 py-1 rounded flex items-center gap-2">
+        <button
+          onClick={resetData}
+          className="mt-2 ml-2 bg-red-500 text-white px-4 py-1 rounded flex items-center gap-2"
+        >
           <RefreshCw /> Reset
         </button>
       </div>
