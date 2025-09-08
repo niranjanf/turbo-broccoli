@@ -1,7 +1,24 @@
-/* src/index.css */
 body {
   margin: 0;
-  font-family: sans-serif;
-  background-color: #f8fafc; /* optional */
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  background-color: #f0f4f8;
+}
+
+button {
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+button:hover {
+  opacity: 0.9;
+  transform: translateY(-1px);
+}
+
+ul {
+  padding-left: 1rem;
+}
+
+li {
+  margin: 0.3rem 0;
 }
 
