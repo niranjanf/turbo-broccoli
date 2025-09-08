@@ -1,11 +1,5 @@
 import React, { useState, useEffect, useMemo } from "react";
-import {
-  Plus,
-  Users,
-  Receipt,
-  Mail,
-  RefreshCw,
-} from "lucide-react";
+import { Plus, Users, Receipt, Mail, RefreshCw } from "lucide-react";
 
 interface Member {
   id: string;
@@ -18,6 +12,7 @@ interface Expense {
   description: string;
   amount: number;
   paid: Record<string, number>; // memberId -> amount paid
+  splitAmong: string[];
   date: string;
 }
 
@@ -52,43 +47,47 @@ function App() {
     if (members.length === 0) return alert("Add members first!");
     const description = prompt("Enter expense description") || "Expense";
 
-    // Step 1: Enter total expense
     const totalAmountStr = prompt("Enter total expense amount") || "0";
     const totalAmount = Number(totalAmountStr);
-    if (totalAmount <= 0) return alert("Invalid total expense!");
+    if (totalAmount <= 0) return alert("Invalid total expense amount!");
 
-    // Step 2: Enter how much each member paid
     const paid: Record<string, number> = {};
+    let totalPaid = 0;
+
     members.forEach((m) => {
       const amtStr = prompt(`Amount paid by ${m.name}`) || "0";
-      paid[m.id] = Number(amtStr);
+      const amt = Number(amtStr);
+      paid[m.id] = amt;
+      totalPaid += amt;
     });
 
-    // Step 3: Validate total paid matches total amount
-    const sumPaid = Object.values(paid).reduce((a, b) => a + b, 0);
-    if (sumPaid !== totalAmount) {
-      alert(`Total paid by members (${sumPaid}) does not match total expense (${totalAmount})`);
-      return;
+    if (totalPaid !== totalAmount) {
+      return alert(`Total paid by members (${totalPaid}) does not match total expense (${totalAmount})`);
     }
+
+    const splitAmong = members.map((m) => m.id);
 
     setExpenses([
       ...expenses,
-      { id: Date.now().toString(), description, amount: totalAmount, paid, date: new Date().toISOString() },
+      { id: Date.now().toString(), description, amount: totalAmount, paid, splitAmong, date: new Date().toISOString() },
     ]);
   };
 
-  // Calculate balances (how much each member owes or is owed)
+  // Calculate balances
   const balances = useMemo(() => {
     const bal: Record<string, number> = {};
-    if (members.length === 0 || expenses.length === 0) return bal;
+    members.forEach((m) => (bal[m.id] = 0));
 
-    const totalExpense = expenses.reduce((sum, e) => sum + e.amount, 0);
-    const perPerson = totalExpense / members.length;
+    expenses.forEach((exp) => {
+      const equalShare = exp.amount / exp.splitAmong.length;
 
-    members.forEach((m) => {
-      // Total paid by member
-      const totalPaid = expenses.reduce((sum, e) => sum + (e.paid[m.id] || 0), 0);
-      bal[m.id] = totalPaid - perPerson; // positive = member paid extra, negative = owes
+      exp.splitAmong.forEach((id) => {
+        bal[id] -= equalShare; // each owes equal share
+      });
+
+      Object.entries(exp.paid).forEach(([id, amt]) => {
+        bal[id] += amt; // add what each paid
+      });
     });
 
     return bal;
@@ -105,7 +104,9 @@ function App() {
       else if (b < 0) neg.push({ id, bal: -b });
     });
 
-    let i = 0, j = 0;
+    let i = 0,
+      j = 0;
+
     while (i < pos.length && j < neg.length) {
       const pay = Math.min(pos[i].bal, neg[j].bal);
       owes.push({ from: neg[j].id, to: pos[i].id, amount: pay });
@@ -177,10 +178,7 @@ function App() {
             </li>
           ))}
         </ul>
-        <button
-          onClick={addMember}
-          className="mt-2 bg-indigo-500 text-white px-4 py-1 rounded flex items-center gap-2"
-        >
+        <button onClick={addMember} className="mt-2 bg-indigo-500 text-white px-4 py-1 rounded flex items-center gap-2">
           <Plus /> Add Member
         </button>
       </div>
@@ -197,10 +195,7 @@ function App() {
             </li>
           ))}
         </ul>
-        <button
-          onClick={addExpense}
-          className="mt-2 bg-green-500 text-white px-4 py-1 rounded flex items-center gap-2"
-        >
+        <button onClick={addExpense} className="mt-2 bg-green-500 text-white px-4 py-1 rounded flex items-center gap-2">
           <Plus /> Add Expense
         </button>
       </div>
@@ -231,16 +226,10 @@ function App() {
             );
           })}
         </ul>
-        <button
-          onClick={emailSettlements}
-          className="mt-2 bg-blue-500 text-white px-4 py-1 rounded flex items-center gap-2"
-        >
+        <button onClick={emailSettlements} className="mt-2 bg-blue-500 text-white px-4 py-1 rounded flex items-center gap-2">
           <Mail /> Send Emails
         </button>
-        <button
-          onClick={resetData}
-          className="mt-2 ml-2 bg-red-500 text-white px-4 py-1 rounded flex items-center gap-2"
-        >
+        <button onClick={resetData} className="mt-2 ml-2 bg-red-500 text-white px-4 py-1 rounded flex items-center gap-2">
           <RefreshCw /> Reset
         </button>
       </div>
