@@ -49,9 +49,7 @@ function App() {
 
     const totalAmountStr = prompt("Enter total expense amount") || "0";
     const totalAmount = Number(totalAmountStr);
-    if (isNaN(totalAmount) || totalAmount <= 0) {
-      return alert("Invalid total expense amount!");
-    }
+    if (totalAmount <= 0) return alert("Invalid total expense amount!");
 
     const paid: Record<string, number> = {};
     let totalPaid = 0;
@@ -59,13 +57,13 @@ function App() {
     members.forEach((m) => {
       const amtStr = prompt(`Amount paid by ${m.name}`) || "0";
       const amt = Number(amtStr);
-      paid[m.id] = isNaN(amt) ? 0 : amt;
-      totalPaid += paid[m.id];
+      paid[m.id] = amt;
+      totalPaid += amt;
     });
 
     if (totalPaid !== totalAmount) {
-      return alert(
-        `Total paid by members (${totalPaid}) does not match total expense (${totalAmount})`
+      alert(
+        `⚠️ Warning: Total paid by members (${totalPaid}) does not match total expense (${totalAmount}).`
       );
     }
 
@@ -93,17 +91,12 @@ function App() {
       const equalShare = exp.amount / exp.splitAmong.length;
 
       exp.splitAmong.forEach((id) => {
-        bal[id] = (bal[id] || 0) - equalShare; // everyone owes share
+        bal[id] -= equalShare; // each owes equal share
       });
 
       Object.entries(exp.paid).forEach(([id, amt]) => {
-        bal[id] = (bal[id] || 0) + amt; // add what they paid
+        bal[id] += amt; // add what each paid
       });
-    });
-
-    // normalize values
-    Object.keys(bal).forEach((id) => {
-      bal[id] = parseFloat(bal[id].toFixed(2));
     });
 
     return bal;
@@ -116,8 +109,8 @@ function App() {
     const neg: { id: string; bal: number }[] = [];
 
     Object.entries(balances).forEach(([id, b]) => {
-      if (b > 0) pos.push({ id, bal: b });
-      else if (b < 0) neg.push({ id, bal: -b });
+      if (b > 0.01) pos.push({ id, bal: b }); // creditor
+      else if (b < -0.01) neg.push({ id, bal: -b }); // debtor
     });
 
     let i = 0,
@@ -128,8 +121,8 @@ function App() {
       owes.push({ from: neg[j].id, to: pos[i].id, amount: pay });
       pos[i].bal -= pay;
       neg[j].bal -= pay;
-      if (pos[i].bal === 0) i++;
-      if (neg[j].bal === 0) j++;
+      if (pos[i].bal <= 0.01) i++;
+      if (neg[j].bal <= 0.01) j++;
     }
 
     return owes;
@@ -170,10 +163,7 @@ function App() {
         const html = `Hi ${fromMember.name},<br/>
           Please pay <b>₹${amount.toFixed(2)}</b> to ${toMember.name}.<br/>
           <br/>
-          💰 Total expenses so far: ₹${expenses.reduce(
-            (a, e) => a + e.amount,
-            0
-          )}.`;
+          💰 Total expenses so far: ₹${expenses.reduce((a, e) => a + e.amount, 0)}.`;
         sendEmail(fromMember.email, "Expense Settlement", html);
       }
     });
@@ -232,10 +222,7 @@ function App() {
         <ul>
           {members.map((m) => (
             <li key={m.id}>
-              {m.name}: ₹
-              {balances[m.id] !== undefined
-                ? balances[m.id].toFixed(2)
-                : "0.00"}
+              {m.name}: ₹{(balances[m.id] || 0).toFixed(2)}
             </li>
           ))}
         </ul>
