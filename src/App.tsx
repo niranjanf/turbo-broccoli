@@ -17,7 +17,7 @@ interface Expense {
   id: string;
   description: string;
   amount: number;
-  paid: Record<string, number>; // memberId -> amount paid
+  paid: Record<string, number>; // memberId -> amount contributed
   splitAmong: string[];
   date: string;
 }
@@ -48,22 +48,46 @@ function App() {
     setMembers([...members, { id: Date.now().toString(), name, email: email || "" }]);
   };
 
-  // Add expense
+  // Add expense with total first, then member contributions
   const addExpense = () => {
     if (members.length === 0) return alert("Add members first!");
+
     const description = prompt("Enter expense description") || "Expense";
+    const totalAmountStr = prompt("Enter total expense amount");
+    const totalAmount = Number(totalAmountStr);
+
+    if (!totalAmount || totalAmount <= 0) {
+      return alert("Invalid total amount!");
+    }
+
     const paid: Record<string, number> = {};
+    let totalPaid = 0;
+
     members.forEach((m) => {
-      const amt = prompt(`Amount paid by ${m.name}`) || "0";
-      paid[m.id] = Number(amt);
+      const amt = prompt(`Amount contributed by ${m.name}`) || "0";
+      const numAmt = Number(amt);
+      paid[m.id] = numAmt;
+      totalPaid += numAmt;
     });
-    const totalPaid = Object.values(paid).reduce((a, b) => a + b, 0);
-    if (totalPaid === 0) return alert("No amount entered!");
+
+    if (totalPaid > totalAmount) {
+      return alert(
+        `⚠️ Contributions exceed total expense! Total = ₹${totalAmount}, Entered = ₹${totalPaid}`
+      );
+    }
+
     const splitAmong = members.map((m) => m.id);
 
     setExpenses([
       ...expenses,
-      { id: Date.now().toString(), description, amount: totalPaid, paid, splitAmong, date: new Date().toISOString() },
+      {
+        id: Date.now().toString(),
+        description,
+        amount: totalAmount,
+        paid,
+        splitAmong,
+        date: new Date().toISOString(),
+      },
     ]);
   };
 
@@ -72,6 +96,7 @@ function App() {
     const bal: Record<string, number> = {};
     members.forEach((m) => (bal[m.id] = 0));
     expenses.forEach((exp) => {
+      const unpaid = exp.amount - Object.values(exp.paid).reduce((a, b) => a + b, 0);
       const totalSplit = exp.amount / exp.splitAmong.length;
       exp.splitAmong.forEach((id) => {
         bal[id] -= totalSplit;
