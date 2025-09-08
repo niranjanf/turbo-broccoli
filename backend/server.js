@@ -12,7 +12,7 @@ const PORT = process.env.PORT || 5000;
 app.use(cors());
 app.use(bodyParser.json());
 
-// Nodemailer transporter for Gmail
+// ✅ Configure Nodemailer with Gmail + App Password
 const transporter = nodemailer.createTransport({
   service: "gmail",
   auth: {
@@ -21,18 +21,19 @@ const transporter = nodemailer.createTransport({
   },
 });
 
-// API endpoint
+// ✅ API endpoint
 app.post("/send-email", async (req, res) => {
-  const { to, subject, text, html } = req.body;
+  const { to, subject, html } = req.body;
 
   try {
     await transporter.sendMail({
       from: process.env.EMAIL_USER,
       to,
       subject,
-      text,
       html,
     });
+
+    console.log(`📧 Email sent to ${to}`);
     res.json({ success: true, message: "Email sent!" });
   } catch (err) {
     console.error("❌ Email error:", err);
@@ -40,5 +41,7 @@ app.post("/send-email", async (req, res) => {
   }
 });
 
-app.listen(PORT, () => console.log(`✅ Server running on http://localhost:${PORT}`));
+app.listen(PORT, () => {
+  console.log(`✅ Backend running on http://localhost:${PORT}`);
+});
 
