@@ -18,7 +18,6 @@ interface Expense {
   description: string;
   amount: number;
   paid: Record<string, number>; // memberId -> amount paid
-  splitAmong: string[];
   date: string;
 }
 
@@ -51,56 +50,45 @@ function App() {
   // Add expense
   const addExpense = () => {
     if (members.length === 0) return alert("Add members first!");
-
     const description = prompt("Enter expense description") || "Expense";
+
+    // Step 1: Enter total expense
     const totalAmountStr = prompt("Enter total expense amount") || "0";
     const totalAmount = Number(totalAmountStr);
-    if (totalAmount <= 0) return alert("Invalid total amount!");
+    if (totalAmount <= 0) return alert("Invalid total expense!");
 
+    // Step 2: Enter how much each member paid
     const paid: Record<string, number> = {};
-    let totalPaidByMembers = 0;
-
     members.forEach((m) => {
-      const amt = prompt(`Amount paid by ${m.name}`) || "0";
-      const amtNum = Number(amt);
-      paid[m.id] = amtNum;
-      totalPaidByMembers += amtNum;
+      const amtStr = prompt(`Amount paid by ${m.name}`) || "0";
+      paid[m.id] = Number(amtStr);
     });
 
-    if (totalPaidByMembers !== totalAmount) {
-      if (!window.confirm(
-        `Total paid by members (${totalPaidByMembers}) does not equal total expense (${totalAmount}). Continue?`
-      )) return;
+    // Step 3: Validate total paid matches total amount
+    const sumPaid = Object.values(paid).reduce((a, b) => a + b, 0);
+    if (sumPaid !== totalAmount) {
+      alert(`Total paid by members (${sumPaid}) does not match total expense (${totalAmount})`);
+      return;
     }
-
-    const splitAmong = members.map((m) => m.id);
 
     setExpenses([
       ...expenses,
-      {
-        id: Date.now().toString(),
-        description,
-        amount: totalAmount,
-        paid,
-        splitAmong,
-        date: new Date().toISOString(),
-      },
+      { id: Date.now().toString(), description, amount: totalAmount, paid, date: new Date().toISOString() },
     ]);
   };
 
-  // Calculate balances (paid - share)
+  // Calculate balances (how much each member owes or is owed)
   const balances = useMemo(() => {
     const bal: Record<string, number> = {};
-    members.forEach((m) => (bal[m.id] = 0));
+    if (members.length === 0 || expenses.length === 0) return bal;
 
-    expenses.forEach((exp) => {
-      const share = exp.amount / exp.splitAmong.length;
-      exp.splitAmong.forEach((id) => {
-        bal[id] -= share; // everyone owes their share
-      });
-      Object.entries(exp.paid).forEach(([id, amt]) => {
-        bal[id] += amt; // add what they actually paid
-      });
+    const totalExpense = expenses.reduce((sum, e) => sum + e.amount, 0);
+    const perPerson = totalExpense / members.length;
+
+    members.forEach((m) => {
+      // Total paid by member
+      const totalPaid = expenses.reduce((sum, e) => sum + (e.paid[m.id] || 0), 0);
+      bal[m.id] = totalPaid - perPerson; // positive = member paid extra, negative = owes
     });
 
     return bal;
@@ -147,11 +135,8 @@ function App() {
         body: JSON.stringify({ to: memberEmail, subject, html }),
       });
       const data = await res.json();
-      if (data.success) {
-        alert(`✅ Email sent to ${memberEmail}`);
-      } else {
-        alert(`❌ Email failed: ${data.error || "Unknown error"}`);
-      }
+      if (data.success) alert(`✅ Email sent to ${memberEmail}`);
+      else alert(`❌ Email failed: ${data.error || "Unknown error"}`);
     } catch (err) {
       console.error(err);
       alert("⚠️ Error sending email (check backend server).");
@@ -208,8 +193,7 @@ function App() {
         <ul>
           {expenses.map((e) => (
             <li key={e.id}>
-              {e.description} — ₹{e.amount} (Date:{" "}
-              {new Date(e.date).toLocaleDateString()})
+              {e.description} — ₹{e.amount} (Date: {new Date(e.date).toLocaleDateString()})
             </li>
           ))}
         </ul>
