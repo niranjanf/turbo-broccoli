@@ -39,10 +39,7 @@ function App() {
     const name = prompt("Enter member name");
     const email = prompt("Enter member email (optional)");
     if (!name) return;
-    setMembers([
-      ...members,
-      { id: Date.now().toString(), name, email: email || "" },
-    ]);
+    setMembers([...members, { id: Date.now().toString(), name, email: email || "" }]);
   };
 
   // Add expense
@@ -64,14 +61,10 @@ function App() {
       totalPaid += amt;
     });
 
-    // ⚠️ Allow mismatch between paid & total expense
-    if (totalPaid < totalAmount) {
+    if (totalPaid !== totalAmount) {
       alert(
-        `⚠️ Warning: Total paid (${totalPaid}) is less than total expense (${totalAmount}). Shortfall will be counted as owed.`
-      );
-    } else if (totalPaid > totalAmount) {
-      alert(
-        `⚠️ Warning: Total paid (${totalPaid}) is more than total expense (${totalAmount}). Extra will be distributed in balances.`
+        `⚠️ Total paid by members (${totalPaid}) does not match total expense (${totalAmount}). ` +
+          `Balances will still be calculated, but expect one member to owe the difference.`
       );
     }
 
@@ -79,14 +72,7 @@ function App() {
 
     setExpenses([
       ...expenses,
-      {
-        id: Date.now().toString(),
-        description,
-        amount: totalAmount,
-        paid,
-        splitAmong,
-        date: new Date().toISOString(),
-      },
+      { id: Date.now().toString(), description, amount: totalAmount, paid, splitAmong, date: new Date().toISOString() },
     ]);
   };
 
@@ -98,14 +84,12 @@ function App() {
     expenses.forEach((exp) => {
       const equalShare = exp.amount / exp.splitAmong.length;
 
-      // subtract each member’s share
       exp.splitAmong.forEach((id) => {
-        bal[id] -= equalShare;
+        bal[id] -= equalShare; // each owes equal share
       });
 
-      // add what they actually paid
       Object.entries(exp.paid).forEach(([id, amt]) => {
-        bal[id] += amt;
+        bal[id] += amt; // add what each paid
       });
     });
 
@@ -119,9 +103,16 @@ function App() {
     const neg: { id: string; bal: number }[] = [];
 
     Object.entries(balances).forEach(([id, b]) => {
-      if (b > 0) pos.push({ id, bal: b });
-      else if (b < 0) neg.push({ id, bal: -b });
+      if (b > 0.01) pos.push({ id, bal: b });
+      else if (b < -0.01) neg.push({ id, bal: -b });
     });
+
+    // ⚠️ If no positives exist but negatives do → assign negatives to first member
+    if (pos.length === 0 && neg.length > 0 && members.length > 1) {
+      const receiver = members[0].id; // pick first member arbitrarily
+      const totalNeg = neg.reduce((a, n) => a + n.bal, 0);
+      pos.push({ id: receiver, bal: totalNeg });
+    }
 
     let i = 0,
       j = 0;
@@ -131,12 +122,12 @@ function App() {
       owes.push({ from: neg[j].id, to: pos[i].id, amount: pay });
       pos[i].bal -= pay;
       neg[j].bal -= pay;
-      if (pos[i].bal === 0) i++;
-      if (neg[j].bal === 0) j++;
+      if (pos[i].bal < 0.01) i++;
+      if (neg[j].bal < 0.01) j++;
     }
 
     return owes;
-  }, [balances]);
+  }, [balances, members]);
 
   // Reset data
   const resetData = () => {
@@ -147,11 +138,7 @@ function App() {
   };
 
   // Send email through backend
-  const sendEmail = async (
-    memberEmail: string,
-    subject: string,
-    html: string
-  ) => {
+  const sendEmail = async (memberEmail: string, subject: string, html: string) => {
     try {
       const res = await fetch("http://localhost:5000/send-email", {
         method: "POST",
@@ -177,10 +164,7 @@ function App() {
         const html = `Hi ${fromMember.name},<br/>
           Please pay <b>₹${amount.toFixed(2)}</b> to ${toMember.name}.<br/>
           <br/>
-          💰 Total expenses so far: ₹${expenses.reduce(
-            (a, e) => a + e.amount,
-            0
-          )}.`;
+          💰 Total expenses so far: ₹${expenses.reduce((a, e) => a + e.amount, 0)}.`;
         sendEmail(fromMember.email, "Expense Settlement", html);
       }
     });
@@ -204,10 +188,7 @@ function App() {
             </li>
           ))}
         </ul>
-        <button
-          onClick={addMember}
-          className="mt-2 bg-indigo-500 text-white px-4 py-1 rounded flex items-center gap-2"
-        >
+        <button onClick={addMember} className="mt-2 bg-indigo-500 text-white px-4 py-1 rounded flex items-center gap-2">
           <Plus /> Add Member
         </button>
       </div>
@@ -220,15 +201,11 @@ function App() {
         <ul>
           {expenses.map((e) => (
             <li key={e.id}>
-              {e.description} — ₹{e.amount} (Date:{" "}
-              {new Date(e.date).toLocaleDateString()})
+              {e.description} — ₹{e.amount} (Date: {new Date(e.date).toLocaleDateString()})
             </li>
           ))}
         </ul>
-        <button
-          onClick={addExpense}
-          className="mt-2 bg-green-500 text-white px-4 py-1 rounded flex items-center gap-2"
-        >
+        <button onClick={addExpense} className="mt-2 bg-green-500 text-white px-4 py-1 rounded flex items-center gap-2">
           <Plus /> Add Expense
         </button>
       </div>
@@ -250,8 +227,7 @@ function App() {
         <h2 className="text-xl font-semibold">Settlements</h2>
         <ul>
           {settlements.map((s, i) => {
-            const from =
-              members.find((m) => m.id === s.from)?.name || "Unknown";
+            const from = members.find((m) => m.id === s.from)?.name || "Unknown";
             const to = members.find((m) => m.id === s.to)?.name || "Unknown";
             return (
               <li key={i}>
@@ -260,16 +236,10 @@ function App() {
             );
           })}
         </ul>
-        <button
-          onClick={emailSettlements}
-          className="mt-2 bg-blue-500 text-white px-4 py-1 rounded flex items-center gap-2"
-        >
+        <button onClick={emailSettlements} className="mt-2 bg-blue-500 text-white px-4 py-1 rounded flex items-center gap-2">
           <Mail /> Send Emails
         </button>
-        <button
-          onClick={resetData}
-          className="mt-2 ml-2 bg-red-500 text-white px-4 py-1 rounded flex items-center gap-2"
-        >
+        <button onClick={resetData} className="mt-2 ml-2 bg-red-500 text-white px-4 py-1 rounded flex items-center gap-2">
           <RefreshCw /> Reset
         </button>
       </div>
