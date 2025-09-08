@@ -61,10 +61,9 @@ function App() {
       totalPaid += amt;
     });
 
-    if (Math.round(totalPaid * 100) / 100 !== Math.round(totalAmount * 100) / 100) {
-      return alert(
-        `Total paid by members (${totalPaid}) does not match total expense (${totalAmount})`
-      );
+    // ⚡ Keep old logic: alert if total paid doesn't match total amount
+    if (totalPaid !== totalAmount) {
+      return alert(`Total paid by members (${totalPaid}) does not match total expense (${totalAmount})`);
     }
 
     const splitAmong = members.map((m) => m.id);
@@ -75,7 +74,7 @@ function App() {
     ]);
   };
 
-  // Calculate balances
+  // Calculate balances (fixed rounding + partial payments)
   const balances = useMemo(() => {
     const bal: Record<string, number> = {};
     members.forEach((m) => (bal[m.id] = 0));
@@ -83,33 +82,37 @@ function App() {
     expenses.forEach((exp) => {
       const equalShare = exp.amount / exp.splitAmong.length;
       exp.splitAmong.forEach((id) => {
-        bal[id] -= equalShare;
+        bal[id] -= equalShare; // owes
       });
       Object.entries(exp.paid).forEach(([id, amt]) => {
-        bal[id] += amt;
+        bal[id] += amt; // paid
       });
+    });
+
+    // Round balances to 2 decimals
+    Object.keys(bal).forEach((id) => {
+      bal[id] = parseFloat(bal[id].toFixed(2));
     });
 
     return bal;
   }, [expenses, members]);
 
-  // Calculate settlements
+  // Calculate settlements (fixed)
   const settlements = useMemo(() => {
     const owes: { from: string; to: string; amount: number }[] = [];
-    const pos: { id: string; bal: number }[] = [];
-    const neg: { id: string; bal: number }[] = [];
-
-    Object.entries(balances).forEach(([id, b]) => {
-      if (b > 0.01) pos.push({ id, bal: b }); // anyone owed money
-      else if (b < -0.01) neg.push({ id, bal: -b }); // anyone owes money
-    });
+    const pos = Object.entries(balances)
+      .filter(([_, b]) => b > 0)
+      .map(([id, bal]) => ({ id, bal }));
+    const neg = Object.entries(balances)
+      .filter(([_, b]) => b < 0)
+      .map(([id, bal]) => ({ id, bal: -bal }));
 
     let i = 0,
       j = 0;
 
     while (i < pos.length && j < neg.length) {
       const pay = Math.min(pos[i].bal, neg[j].bal);
-      owes.push({ from: neg[j].id, to: pos[i].id, amount: pay });
+      if (pay > 0) owes.push({ from: neg[j].id, to: pos[i].id, amount: parseFloat(pay.toFixed(2)) });
       pos[i].bal -= pay;
       neg[j].bal -= pay;
       if (pos[i].bal <= 0.01) i++;
@@ -119,7 +122,7 @@ function App() {
     return owes;
   }, [balances]);
 
-  // Reset data
+  // Reset
   const resetData = () => {
     if (window.confirm("Reset all data?")) {
       setMembers([]);
@@ -127,7 +130,7 @@ function App() {
     }
   };
 
-  // Send email through backend
+  // Send email
   const sendEmail = async (memberEmail: string, subject: string, html: string) => {
     try {
       const res = await fetch("http://localhost:5000/send-email", {
@@ -144,7 +147,7 @@ function App() {
     }
   };
 
-  // Send settlement emails
+  // Email settlements
   const emailSettlements = () => {
     if (settlements.length === 0) return alert("No settlements to send!");
     settlements.forEach(({ from, to, amount }) => {
