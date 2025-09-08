@@ -62,8 +62,8 @@ function App() {
     });
 
     if (totalPaid !== totalAmount) {
-      alert(
-        `⚠️ Warning: Total paid by members (${totalPaid}) does not match total expense (${totalAmount}).`
+      return alert(
+        `⚠️ Total paid by members (${totalPaid}) does not match total expense (${totalAmount})`
       );
     }
 
@@ -82,7 +82,7 @@ function App() {
     ]);
   };
 
-  // Calculate balances
+  // ✅ Calculate balances
   const balances = useMemo(() => {
     const bal: Record<string, number> = {};
     members.forEach((m) => (bal[m.id] = 0));
@@ -90,27 +90,29 @@ function App() {
     expenses.forEach((exp) => {
       const equalShare = exp.amount / exp.splitAmong.length;
 
+      // subtract equal share from everyone
       exp.splitAmong.forEach((id) => {
-        bal[id] -= equalShare; // each owes equal share
+        bal[id] -= equalShare;
       });
 
+      // add back actual paid
       Object.entries(exp.paid).forEach(([id, amt]) => {
-        bal[id] += amt; // add what each paid
+        bal[id] += amt;
       });
     });
 
     return bal;
   }, [expenses, members]);
 
-  // Calculate settlements
+  // ✅ Calculate settlements
   const settlements = useMemo(() => {
     const owes: { from: string; to: string; amount: number }[] = [];
     const pos: { id: string; bal: number }[] = [];
     const neg: { id: string; bal: number }[] = [];
 
     Object.entries(balances).forEach(([id, b]) => {
-      if (b > 0.01) pos.push({ id, bal: b }); // creditor
-      else if (b < -0.01) neg.push({ id, bal: -b }); // debtor
+      if (b > 0.01) pos.push({ id, bal: b });
+      else if (b < -0.01) neg.push({ id, bal: -b });
     });
 
     let i = 0,
@@ -121,8 +123,8 @@ function App() {
       owes.push({ from: neg[j].id, to: pos[i].id, amount: pay });
       pos[i].bal -= pay;
       neg[j].bal -= pay;
-      if (pos[i].bal <= 0.01) i++;
-      if (neg[j].bal <= 0.01) j++;
+      if (pos[i].bal < 0.01) i++;
+      if (neg[j].bal < 0.01) j++;
     }
 
     return owes;
@@ -222,7 +224,7 @@ function App() {
         <ul>
           {members.map((m) => (
             <li key={m.id}>
-              {m.name}: ₹{(balances[m.id] || 0).toFixed(2)}
+              {m.name}: ₹{balances[m.id]?.toFixed(2)}
             </li>
           ))}
         </ul>
