@@ -11,7 +11,7 @@ interface Expense {
   id: string;
   description: string;
   amount: number;
-  paidBy: string; // member name
+  paidBy: string;
 }
 
 interface Settlement {
@@ -34,113 +34,100 @@ function App() {
     if (savedExpenses) setExpenses(JSON.parse(savedExpenses));
   }, []);
 
-  // Save to localStorage
+  // Save and calculate whenever data changes
   useEffect(() => {
     localStorage.setItem("members", JSON.stringify(members));
     localStorage.setItem("expenses", JSON.stringify(expenses));
-    calculateBalances();
+    calculateBalancesAndSettlements();
   }, [members, expenses]);
 
   // Add member
   const addMember = () => {
     const name = prompt("Enter member name");
-    const email = prompt("Enter member email (optional)");
     if (!name) return;
+    const email = prompt("Enter member email (optional)");
     setMembers([...members, { id: Date.now().toString(), name, email: email || "" }]);
   };
 
-  // Add expense
+  // Add expense (ensures sum of contributions = total)
   const addExpense = () => {
     if (members.length === 0) return alert("Add members first!");
 
     const description = prompt("Enter expense description") || "Expense";
-    const totalAmountStr = prompt("Enter total expense amount") || "0";
-    const totalAmount = Number(totalAmountStr);
-    if (totalAmount <= 0) return alert("Invalid total expense amount!");
+    const totalAmount = Number(prompt("Enter total expense amount") || "0");
+    if (totalAmount <= 0) return alert("Invalid expense amount!");
 
-    const paidMap: Record<string, number> = {};
-    let totalPaid = 0;
+    const contributions: Record<string, number> = {};
+    let sum = 0;
     members.forEach((m) => {
-      const amtStr = prompt(`Amount paid by ${m.name}`) || "0";
-      const amt = Number(amtStr);
-      paidMap[m.name] = amt;
-      totalPaid += amt;
+      const val = Number(prompt(`Amount paid by ${m.name}`) || "0");
+      contributions[m.name] = val;
+      sum += val;
     });
 
-    if (totalPaid !== totalAmount) {
-      return alert(`Total paid by members (${totalPaid}) does not match total expense (${totalAmount})`);
+    if (sum !== totalAmount) {
+      return alert(`Total paid (${sum}) does not equal total expense (${totalAmount})`);
     }
 
-    // Create separate expense entries per payer
+    // add expenses for each payer
+    const newExpenses: Expense[] = [];
     members.forEach((m) => {
-      if (paidMap[m.name] > 0) {
-        setExpenses((prev) => [
-          ...prev,
-          {
-            id: Date.now().toString() + Math.random(),
-            description,
-            amount: paidMap[m.name],
-            paidBy: m.name,
-          },
-        ]);
+      if (contributions[m.name] > 0) {
+        newExpenses.push({
+          id: Date.now().toString() + Math.random(),
+          description,
+          amount: contributions[m.name],
+          paidBy: m.name,
+        });
       }
     });
+    setExpenses((prev) => [...prev, ...newExpenses]);
   };
 
-  // Calculate balances and settlements
-  const calculateBalances = () => {
-    const bal: Record<string, number> = {};
-    members.forEach((m) => (bal[m.name] = 0));
-
-    const total = expenses.reduce((sum, e) => sum + e.amount, 0);
+  // ✅ Calculate balances and settlements
+  const calculateBalancesAndSettlements = () => {
     if (members.length === 0) return;
 
-    const perHead = total / members.length;
+    const totals: Record<string, number> = {};
+    members.forEach((m) => (totals[m.name] = 0));
 
-    const paidMap: Record<string, number> = {};
-    members.forEach((m) => (paidMap[m.name] = 0));
     expenses.forEach((e) => {
-      if (paidMap[e.paidBy] !== undefined) {
-        paidMap[e.paidBy] += e.amount;
-      }
+      totals[e.paidBy] += e.amount;
     });
 
+    const totalExpense = expenses.reduce((s, e) => s + e.amount, 0);
+    const share = totalExpense / members.length;
+
+    const bal: Record<string, number> = {};
     members.forEach((m) => {
-      bal[m.name] = +(paidMap[m.name] - perHead).toFixed(2);
+      bal[m.name] = +(totals[m.name] - share).toFixed(2);
     });
-
     setBalances(bal);
-    calculateSettlements(bal);
-  };
 
-  const calculateSettlements = (bal: Record<string, number>) => {
+    // settlements
     const pos: { name: string; bal: number }[] = [];
     const neg: { name: string; bal: number }[] = [];
-
-    Object.entries(bal).forEach(([name, value]) => {
-      if (value > 0) pos.push({ name, bal: value });
-      else if (value < 0) neg.push({ name, bal: -value });
+    Object.entries(bal).forEach(([name, amt]) => {
+      if (amt > 0) pos.push({ name, bal: amt });
+      else if (amt < 0) neg.push({ name, bal: -amt });
     });
 
     const owes: Settlement[] = [];
     let i = 0,
       j = 0;
-
     while (i < pos.length && j < neg.length) {
-      const pay = Math.min(pos[i].bal, neg[j].bal);
-      owes.push({ from: neg[j].name, to: pos[i].name, amount: pay });
-      pos[i].bal -= pay;
-      neg[j].bal -= pay;
+      const amt = Math.min(pos[i].bal, neg[j].bal);
+      owes.push({ from: neg[j].name, to: pos[i].name, amount: amt });
+      pos[i].bal -= amt;
+      neg[j].bal -= amt;
       if (pos[i].bal === 0) i++;
       if (neg[j].bal === 0) j++;
     }
-
     setSettlements(owes);
   };
 
-  // Reset all data
   const resetData = () => {
-    if (window.confirm("Reset all data?")) {
+    if (window.confirm("Reset everything?")) {
       setMembers([]);
       setExpenses([]);
       setBalances({});
@@ -149,46 +136,41 @@ function App() {
     }
   };
 
-  // Send email through backend
-  const sendEmail = async (memberEmail: string, subject: string, html: string) => {
-    try {
-      const res = await fetch("http://localhost:5000/send-email", {
+  // Send settlements via backend email
+  const emailSettlements = async () => {
+    if (settlements.length === 0) return alert("No settlements to send");
+
+    for (const s of settlements) {
+      const from = members.find((m) => m.name === s.from);
+      const to = members.find((m) => m.name === s.to);
+      if (!from?.email || !to?.email) continue;
+
+      const html = `Hi ${from.name},<br/>Please pay <b>₹${s.amount.toFixed(
+        2
+      )}</b> to ${to.name}.<br/>Thanks!`;
+
+      await fetch("http://localhost:5000/send-email", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ to: memberEmail, subject, html }),
+        body: JSON.stringify({
+          to: from.email,
+          subject: "Settlement Reminder",
+          html,
+        }),
       });
-      const data = await res.json();
-      if (data.success) alert(`✅ Email sent to ${memberEmail}`);
-      else alert(`❌ Email failed: ${data.error || "Unknown error"}`);
-    } catch (err) {
-      console.error(err);
-      alert("⚠️ Error sending email (check backend server).");
     }
-  };
-
-  const emailSettlements = () => {
-    if (settlements.length === 0) return alert("No settlements to send!");
-    settlements.forEach(({ from, to, amount }) => {
-      const fromMember = members.find((m) => m.name === from);
-      const toMember = members.find((m) => m.name === to);
-      if (fromMember?.email && toMember?.email) {
-        const html = `Hi ${fromMember.name},<br/>
-          Please pay <b>₹${amount.toFixed(2)}</b> to ${toMember.name}.<br/>
-          💰 Total expenses so far: ₹${expenses.reduce((a, e) => a + e.amount, 0)}.`;
-        sendEmail(fromMember.email, "Expense Settlement", html);
-      }
-    });
+    alert("Emails sent!");
   };
 
   return (
-    <div className="p-6 bg-gray-50 min-h-screen">
-      <h1 className="text-3xl font-bold mb-4 flex items-center gap-2">
+    <div className="p-6 bg-gray-100 min-h-screen">
+      <h1 className="text-2xl font-bold mb-4 flex items-center gap-2">
         <Receipt /> Roommate Expense Splitter
       </h1>
 
       {/* Members */}
       <div className="mb-6">
-        <h2 className="text-xl font-semibold flex items-center gap-2">
+        <h2 className="text-lg font-semibold flex items-center gap-2">
           <Users /> Members
         </h2>
         <ul>
@@ -198,35 +180,33 @@ function App() {
             </li>
           ))}
         </ul>
-        <button onClick={addMember} className="mt-2 bg-indigo-500 text-white px-4 py-1 rounded flex items-center gap-2">
+        <button onClick={addMember} className="mt-2 bg-indigo-500 text-white px-3 py-1 rounded">
           <Plus /> Add Member
         </button>
       </div>
 
       {/* Expenses */}
       <div className="mb-6">
-        <h2 className="text-xl font-semibold flex items-center gap-2">
-          <Receipt /> Expenses
-        </h2>
+        <h2 className="text-lg font-semibold">Expenses</h2>
         <ul>
           {expenses.map((e) => (
             <li key={e.id}>
-              {e.description} — ₹{e.amount} (Paid by: {e.paidBy})
+              {e.description} — ₹{e.amount} (by {e.paidBy})
             </li>
           ))}
         </ul>
-        <button onClick={addExpense} className="mt-2 bg-green-500 text-white px-4 py-1 rounded flex items-center gap-2">
+        <button onClick={addExpense} className="mt-2 bg-green-500 text-white px-3 py-1 rounded">
           <Plus /> Add Expense
         </button>
       </div>
 
       {/* Balances */}
       <div className="mb-6">
-        <h2 className="text-xl font-semibold">Balances</h2>
+        <h2 className="text-lg font-semibold">Balances</h2>
         <ul>
           {members.map((m) => (
             <li key={m.id}>
-              {m.name}: ₹{balances[m.name]?.toFixed(2)}
+              {m.name}: ₹{balances[m.name]?.toFixed(2) || "0.00"}
             </li>
           ))}
         </ul>
@@ -234,18 +214,18 @@ function App() {
 
       {/* Settlements */}
       <div className="mb-6">
-        <h2 className="text-xl font-semibold">Settlements</h2>
+        <h2 className="text-lg font-semibold">Settlements</h2>
         <ul>
           {settlements.map((s, i) => (
             <li key={i}>
-              {s.from} pays ₹{s.amount.toFixed(2)} to {s.to}
+              {s.from} → {s.to}: ₹{s.amount.toFixed(2)}
             </li>
           ))}
         </ul>
-        <button onClick={emailSettlements} className="mt-2 bg-blue-500 text-white px-4 py-1 rounded flex items-center gap-2">
+        <button onClick={emailSettlements} className="mt-2 bg-blue-500 text-white px-3 py-1 rounded">
           <Mail /> Send Emails
         </button>
-        <button onClick={resetData} className="mt-2 ml-2 bg-red-500 text-white px-4 py-1 rounded flex items-center gap-2">
+        <button onClick={resetData} className="mt-2 ml-2 bg-red-500 text-white px-3 py-1 rounded">
           <RefreshCw /> Reset
         </button>
       </div>
